@@ -55,6 +55,43 @@ type dbRes struct {
 	activated time.Time
 }
 
+func auth(next func(w http.ResponseWriter, r *http.Request, claims *Claims)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		authorizationHeader := req.Header.Get("Authorization")
+		if authorizationHeader != "" {
+			bearerToken := strings.Split(authorizationHeader, " ")
+			if len(bearerToken) == 2 {
+				claims := &Claims{}
+				token, err := jwt.ParseWithClaims(bearerToken[1], claims, func(token *jwt.Token) (i interface{}, err error) {
+					return jwtKey, nil
+				})
+				if err != nil || !token.Valid {
+					log.Printf("could not parse token %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				next(w, req, claims)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+}
+
+func refresh(w http.ResponseWriter, _ *http.Request, claims *Claims) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtKey)
+	if err != nil {
+		log.Printf("JWT %v failed: %v", claims.Subject, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("token", tokenString)
+	w.WriteHeader(http.StatusOK)
+}
+
 func confirm(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	token := vars["token"]
@@ -173,7 +210,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims := Claims{
+	claims := &Claims{
 		Role: RoleUser,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: time.Now().Add(exp).Unix(),
@@ -183,16 +220,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtKey)
-	if err != nil {
-		log.Printf("JWT %v failed: %v", cred.Email, err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("token", tokenString)
-	w.WriteHeader(http.StatusOK)
+	refresh(w, r, claims)
 }
 
 func main() {
@@ -211,6 +239,7 @@ func main() {
 	r.HandleFunc("/login", login).Methods("POST")
 	r.HandleFunc("/signin", signin).Methods("POST")
 	r.HandleFunc("/confirm/{token}/{email}", confirm).Methods("GET")
+	r.HandleFunc("/refresh", auth(refresh)).Methods("GET")
 
 	db, err = sql.Open("sqlite3", "./foo.db")
 	if err != nil {
@@ -244,55 +273,4 @@ func genRnd(n int) ([]byte, error) {
 	}
 
 	return b, nil
-}
-
-func dbSelect(email string) (*dbRes, error) {
-	stmt, err := db.Prepare("SELECT id, password, salt, activated from users where email = ?")
-	if err != nil {
-		log.Printf("prepare %v statement failed: %v", email, err)
-		return nil, err
-	}
-	res, err := stmt.Query(email)
-	if err != nil {
-		log.Printf("query %v failed: %v", email, err)
-		return nil, err
-	}
-	if res.Err() != nil {
-		log.Printf("response %v failed: %v", email, err)
-		return nil, err
-	}
-
-	var result *dbRes
-	err = res.Scan(&result)
-	if err != nil {
-		log.Printf("scan %v failed: %v", email, err)
-		return nil, err
-	}
-	if res.Err() != nil {
-		log.Printf("scan %v failed: %v", email, err)
-		return nil, res.Err()
-	}
-	return result, nil
-}
-
-func dbUpdateMailStatus(email string) error {
-	stmt, err := db.Prepare("UPDATE users set emailSent = datetime('now') where email = ?")
-	if err != nil {
-		log.Printf("prepare update %v statement failed: %v", email, err)
-		return err
-	}
-	res, err := stmt.Exec(email)
-	if err != nil {
-		log.Printf("query %v failed: %v", email, err)
-		return err
-	}
-	nr, err := res.RowsAffected()
-	if err != nil {
-		log.Printf("%v rows %v, affected or err: %v", nr, email, err)
-		return err
-	}
-	if nr == 0 {
-		return fmt.Errorf("%v rows for %v affected", nr, email)
-	}
-	return nil
 }

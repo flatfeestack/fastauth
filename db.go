@@ -6,7 +6,7 @@ import (
 )
 
 func dbSelect(email string) (*dbRes, error) {
-	stmt, err := db.Prepare("SELECT id, password, salt, activated from users where email = ?")
+	stmt, err := db.Prepare("SELECT id, password, role, salt, activated from users where email = ?")
 	if err != nil {
 		log.Printf("prepare %v statement failed: %v", email, err)
 		return nil, err
@@ -35,7 +35,7 @@ func dbSelect(email string) (*dbRes, error) {
 }
 
 func dbUpdateMailStatus(email string) error {
-	stmt, err := db.Prepare("UPDATE users set emailSent = datetime('now') where email = ?")
+	stmt, err := db.Prepare("UPDATE users set emailSent = CURRENT_TIMESTAMP where email = ?")
 	if err != nil {
 		log.Printf("prepare update %v statement failed: %v", email, err)
 		return err

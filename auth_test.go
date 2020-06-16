@@ -51,6 +51,19 @@ func TestLoginTwice(t *testing.T) {
 	<-c
 }
 
+func TestConfirm(t *testing.T) {
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	resp := doLogin("tom@test.ch", "test")
+	assert.Equal(t, 200, resp.StatusCode)
+
+	token := token("tom@test.ch")
+	resp = doConfirm("tom@test.ch", token)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	s.Shutdown(context.Background())
+	<-c
+}
+
 func doLogin(email string, pass string) *http.Response {
 	type Payload struct {
 		Email    string `json:"email"`
@@ -81,17 +94,4 @@ func doConfirm(email string, token string) *http.Response {
 func token(email string) string {
 	r, _ := getToken(email)
 	return string(r)
-}
-
-func TestConfirm(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
-	resp := doLogin("tom@test.ch", "test")
-	assert.Equal(t, 200, resp.StatusCode)
-
-	token := token("tom@test.ch")
-	resp = doConfirm("tom@test.ch", token)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	s.Shutdown(context.Background())
-	<-c
 }

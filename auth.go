@@ -225,12 +225,27 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 	router.HandleFunc("/login", login).Methods("POST")
 	router.HandleFunc("/signin", signin).Methods("POST")
 	router.HandleFunc("/refresh", auth(refresh)).Methods("GET")
+
 	//TODO: implement reset pw via email
-	router.HandleFunc("/reset/email/{email}", confirm).Methods("GET")
+	router.HandleFunc("/reset/email/{email}", nil).Methods("GET")
+	router.HandleFunc("/reset/totp", nil).Methods("GET")
+
 	//TODO: implement 2FA with TOTP
+	router.HandleFunc("/setup/totp", nil).Methods("GET")
+
 	//TODO: implement 2FA with SMS
+	router.HandleFunc("/setup/sms/setup", nil).Methods("GET")
+
+	//TODO: implement 2FA with TOTP
+	router.HandleFunc("/confirm/totp/{totp-token}", nil).Methods("GET")
+
+	//TODO: implement 2FA with SMS
+	router.HandleFunc("/confirm/sms/{sms-token}", nil).Methods("GET")
 	router.HandleFunc("/confirm/email/{email}/{token}", confirm).Methods("GET")
+
+	//display for debug and testing
 	router.HandleFunc("/send/email/{email}/{token}", send).Methods("GET")
+	router.HandleFunc("/send/sms/{sms-nr}/{token}", send).Methods("GET")
 
 	var err error
 	db, err = initDB()

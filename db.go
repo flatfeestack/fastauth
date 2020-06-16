@@ -2,56 +2,67 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"time"
 )
 
-func dbSelect(email string) (*dbRes, error) {
-	stmt, err := db.Prepare("SELECT id, password, role, salt, activated from users where email = ?")
-	if err != nil {
-		log.Printf("prepare %v statement failed: %v", email, err)
-		return nil, err
-	}
-	res, err := stmt.Query(email)
-	if err != nil {
-		log.Printf("query %v failed: %v", email, err)
-		return nil, err
-	}
-	if res.Err() != nil {
-		log.Printf("response %v failed: %v", email, err)
-		return nil, err
-	}
+type dbRes struct {
+	id        []byte
+	password  []byte
+	role      []byte
+	salt      []byte
+	activated time.Time
+}
 
-	var result *dbRes
-	err = res.Scan(&result)
+func dbSelect(email string) (*dbRes, error) {
+	var res dbRes
+	err := db.QueryRow("SELECT id, password, role, salt, activated from users where email = ?", email).Scan(&res)
 	if err != nil {
-		log.Printf("scan %v failed: %v", email, err)
 		return nil, err
 	}
-	if res.Err() != nil {
-		log.Printf("scan %v failed: %v", email, err)
-		return nil, res.Err()
+	return &res, nil
+}
+
+func getToken(email string) (string, error) {
+	var token string
+	err := db.QueryRow("SELECT token from users where email = ?", email).Scan(&token)
+	if err != nil {
+		return "", err
 	}
-	return result, nil
+	return token, nil
+}
+
+func updateToken(email string, token string) error {
+	stmt, err := db.Prepare("UPDATE users SET activated = CURRENT_TIMESTAMP, token = NULL where email = ? and token = ?")
+	if err != nil {
+		return fmt.Errorf("prepare %v statement failed: %v", email, err)
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(email, token)
+	if err != nil {
+		return fmt.Errorf("prepare statement failed: %v", err)
+	}
+	nr, err := res.RowsAffected()
+	if nr == 0 || err != nil {
+		return fmt.Errorf("%v rows %v, affected or err: %v", nr, email, err)
+	}
+	return nil
 }
 
 func dbUpdateMailStatus(email string) error {
 	stmt, err := db.Prepare("UPDATE users set emailSent = CURRENT_TIMESTAMP where email = ?")
 	if err != nil {
-		log.Printf("prepare update %v statement failed: %v", email, err)
-		return err
+		return fmt.Errorf("prepare update %v statement failed: %v", email, err)
 	}
+	defer stmt.Close()
+
 	res, err := stmt.Exec(email)
 	if err != nil {
-		log.Printf("query %v failed: %v", email, err)
-		return err
+		return fmt.Errorf("query %v failed: %v", email, err)
 	}
 	nr, err := res.RowsAffected()
-	if err != nil {
-		log.Printf("%v rows %v, affected or err: %v", nr, email, err)
-		return err
-	}
-	if nr == 0 {
-		return fmt.Errorf("%v rows for %v affected", nr, email)
+	if nr == 0 || err != nil {
+		return fmt.Errorf("%v rows %v, affected or err: %v", nr, email, err)
 	}
 	return nil
 }

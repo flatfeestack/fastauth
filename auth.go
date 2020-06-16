@@ -32,7 +32,7 @@ var (
 type Opts struct {
 	Port     int    `short:"p" long:"port" description:"Port to listen on" default:"8080"`
 	DBPath   string `short:"d" long:"dbpath" description:"Path to the DB file" default:"."`
-	Url      string `short:"u" long:"url" description:"URL to email service, e.g., https://email.com/send/{email}/{token}/{lang}" default:"http://localhost:8080/send/{email}/{token}/{lang}"`
+	Url      string `short:"u" long:"url" description:"URL to email service, e.g., https://email.com/send/email/{email}/{token}" default:"http://localhost:8080/send/email/{email}/{token}"`
 	Audience string `short:"a" long:"aud" description:"Audience comma separated string, e.g., FFS_FE, FFS_DB"`
 	Expires  int    `short:"e" long:"exp" description:"Token expiration days, e.g., 7" default:"7"`
 }
@@ -46,14 +46,6 @@ type Claims struct {
 	jwt.StandardClaims
 }
 
-type dbRes struct {
-	id        []byte
-	password  []byte
-	role      []byte
-	salt      []byte
-	activated time.Time
-}
-
 func auth(next func(w http.ResponseWriter, r *http.Request, claims *Claims)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		authorizationHeader := req.Header.Get("Authorization")
@@ -65,15 +57,17 @@ func auth(next func(w http.ResponseWriter, r *http.Request, claims *Claims)) fun
 					return jwtKey, nil
 				})
 				if err != nil || !token.Valid {
-					log.Printf("could not parse token %v", err)
-					w.WriteHeader(http.StatusBadRequest)
+					writeErr(w, http.StatusBadRequest, "AU01, could not parse token %v", err)
 					return
 				}
 				next(w, req, claims)
 				return
 			}
 		}
+		msg := fmt.Sprint("AU02, authorizationHeader not set")
+		log.Print(msg)
 		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(msg))
 		return
 	}
 }
@@ -82,8 +76,7 @@ func refresh(w http.ResponseWriter, _ *http.Request, claims *Claims) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		log.Printf("JWT %v failed: %v", claims.Subject, err)
-		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, http.StatusInternalServerError, "RE01, JWT %v failed: %v", claims.Subject, err)
 		return
 	}
 
@@ -95,19 +88,13 @@ func confirm(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	token := vars["token"]
 	email := vars["email"]
-	stmt, err := db.Prepare("UPDATE users SET activated = datetime('now'), token = NULL where email = ? and token = ?")
-	res, err := stmt.Exec(email, token)
+
+	err := updateToken(email, token)
 	if err != nil {
-		log.Printf("prepare statement failed: %v", err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusInternalServerError, "CO01, update token for %v failed, token %v: %v", email, token, err)
 		return
 	}
-	nr, err := res.RowsAffected()
-	if nr == 0 || err != nil {
-		log.Printf("%v rows %v, affected or err: %v", nr, email, err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -115,22 +102,19 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		log.Printf("JSON, signin err %v", err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI01, JSON, signin err %v", err)
 		return
 	}
 	rnd, err := genRnd(32)
 	if err != nil {
-		log.Printf("RND %v err %v", cred.Email, err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI02, RND %v err %v", cred.Email, err)
 		return
 	}
 	t := hex.EncodeToString(rnd[0:16])
 
 	stmt, err := db.Prepare("INSERT INTO users (email, password, role, salt, token) values (?, ?, 'USR', ?, ?)")
 	if err != nil {
-		log.Printf("prepare %v statement failed: %v", cred.Email, err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI03, prepare %v statement failed: %v", cred.Email, err)
 		return
 	}
 	//https://security.stackexchange.com/questions/11221/how-big-should-salt-be
@@ -138,74 +122,60 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	dk, err := scrypt.Key([]byte(cred.Password), salt, 32768, 8, 1, 32)
 	res, err := stmt.Exec(cred.Email, dk, salt, t)
 	if err != nil {
-		log.Printf("query %v failed: %v", cred.Email, err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI04, query %v failed: %v", cred.Email, err)
 		return
 	}
 	//TODO: if duplicate send email out again
 	nr, err := res.RowsAffected()
 	if nr == 0 || err != nil {
-		log.Printf("%v rows %v, affected or err: %v", nr, cred.Email, err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI05, %v rows %v, affected or err: %v", nr, cred.Email, err)
 		return
 	}
 
 	url := strings.Replace(options.Url, "{email}", url.QueryEscape(cred.Email), 1)
 	url = strings.Replace(url, "{token}", t, 1)
-	url = strings.Replace(url, "{lang}", "en", 1)
 
 	err = sendEmail(url)
 	if err != nil {
-		log.Printf("send email failed: %v", url)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI06, send email failed: %v", url)
 		return
 	}
 
 	err = dbUpdateMailStatus(cred.Email)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "SI07, db update failed: %v", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-}
-
-func sendEmail(url string) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("could not update DB as status from email server: %v %v", resp.Status, resp.StatusCode)
-	}
-	return nil
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		log.Printf("JSON, login err %v", err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "LO01, JSON, login err %v", err)
 		return
 	}
 
 	result, err := dbSelect(cred.Email)
 	if err != nil {
-		log.Printf("DB select, %v err %v", cred.Email, err)
-		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "LO02, DB select, %v err %v", cred.Email, err)
 		return
 	}
 
 	if result.activated.Unix() == 0 {
-		log.Printf("user %v is not activated failed: %v", cred.Email, err)
-		w.WriteHeader(http.StatusUnauthorized)
+		writeErr(w, http.StatusUnauthorized, "LO03, user %v is not activated failed: %v", cred.Email, err)
 		return
 	}
 
 	dk, err := scrypt.Key([]byte(cred.Password), result.salt, 32768, 8, 1, 32)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "LO04, user %v password: %v", cred.Email, err)
+		return
+	}
+
 	if bytes.Compare(dk, result.password) != 0 {
-		w.WriteHeader(http.StatusUnauthorized)
+		writeErr(w, http.StatusUnauthorized, "LO05, user %v password mismatch", cred.Email)
 		return
 	}
 
@@ -229,9 +199,8 @@ func send(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("decoding error %v", err)
 	}
-	lang := vars["lang"]
 
-	fmt.Printf("go to URL: http://%s/confirm/%s/%s/%s", r.Host, email, token, lang)
+	fmt.Printf("go to URL: http://%s/confirm/%s/%s\n", r.Host, email, token)
 	r.Body.Close()
 	w.WriteHeader(http.StatusOK)
 }
@@ -242,35 +211,63 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	exp = time.Hour * 24 * time.Duration(opts.Expires)
 
 	_, doneChannel := server(&opts)
-	select {
-	case <-doneChannel:
-		log.Printf("Done")
-	}
-
+	<-doneChannel
 }
 
 func server(opts *Opts) (*http.Server, <-chan bool) {
 	options = opts
+
+	exp = time.Hour * 24 * time.Duration(opts.Expires)
+
+	router := mux.NewRouter()
+	router.HandleFunc("/login", login).Methods("POST")
+	router.HandleFunc("/signin", signin).Methods("POST")
+	router.HandleFunc("/refresh", auth(refresh)).Methods("GET")
+	//TODO: implement reset pw via email
+	router.HandleFunc("/reset/email/{email}", confirm).Methods("GET")
+	//TODO: implement 2FA with TOTP
+	//TODO: implement 2FA with SMS
+	router.HandleFunc("/confirm/email/{email}/{token}", confirm).Methods("GET")
+	router.HandleFunc("/send/email/{email}/{token}", send).Methods("GET")
+
 	var err error
-	db, err = sql.Open("sqlite3", options.DBPath+"/ffs.db")
+	db, err = initDB()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	r := mux.NewRouter()
-	r.HandleFunc("/login", login).Methods("POST")
-	r.HandleFunc("/signin", signin).Methods("POST")
-	r.HandleFunc("/confirm/{email}/{token}/{lang}", confirm).Methods("GET")
-	r.HandleFunc("/refresh", auth(refresh)).Methods("GET")
-	r.HandleFunc("/send/{email}/{token}/{lang}", send).Methods("GET")
+	log.Printf("Starting auth server on port %v...", opts.Port)
+	s := http.Server{
+		Addr:         ":" + strconv.Itoa(opts.Port),
+		Handler:      router,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	done := make(chan bool)
+	go func() {
+		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+		log.Printf("Shutdown\n")
+		defer db.Close()
+		done <- true
+	}()
+	return &s, done
+}
+
+func initDB() (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", options.DBPath+"/ffs.db")
+	if err != nil {
+		return nil, err
+	}
 
 	//this will create or alter tables
 	file, err := ioutil.ReadFile("startup.sql")
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	requests := strings.Split(string(file), ";")
@@ -279,24 +276,13 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 		request = strings.Replace(request, "\t", "", -1)
 		_, err = db.Exec(request)
 		if err != nil {
-			log.Fatalf("[%v] %v", request, err)
+			return nil, fmt.Errorf("[%v] %v", request, err)
 		}
 	}
-
-	log.Printf("Starting auth server on port %v...", opts.Port)
-	s := http.Server{Addr: ":" + strconv.Itoa(opts.Port), Handler: r}
-
-	doneChannel := make(chan bool)
-	go func() {
-		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-		log.Printf("Finished")
-		defer db.Close()
-		doneChannel <- true
-	}()
-	return &s, doneChannel
+	return db, nil
 }
+
+////////// Util functions
 
 func genRnd(n int) ([]byte, error) {
 	b := make([]byte, n)
@@ -307,4 +293,26 @@ func genRnd(n int) ([]byte, error) {
 	}
 
 	return b, nil
+}
+
+func writeErr(w http.ResponseWriter, code int, format string, a ...interface{}) {
+	msg := fmt.Sprintf(format, a...)
+	log.Printf(msg)
+	w.WriteHeader(code)
+	w.Write([]byte(msg))
+}
+
+func sendEmail(url string) error {
+	c := &http.Client{
+		Timeout: 15 * time.Second,
+	}
+	resp, err := c.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("could not update DB as status from email server: %v %v", resp.Status, resp.StatusCode)
+	}
+	return nil
 }

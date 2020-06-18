@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	"golang.org/x/crypto/scrypt"
 	"time"
 )
 
@@ -22,47 +24,57 @@ func dbSelect(email string) (*dbRes, error) {
 	return &res, nil
 }
 
-func getToken(email string) (string, error) {
-	var token string
-	err := db.QueryRow("SELECT token from users where email = ?", email).Scan(&token)
+func getRefreshToken(email string) (string, error) {
+	var refreshToken string
+	err := db.QueryRow("SELECT refreshToken from users where email = ?", email).Scan(&refreshToken)
 	if err != nil {
 		return "", err
 	}
-	return token, nil
+	return refreshToken, nil
+}
+
+func insertUser(salt []byte, email string, password string, emailToken string) error {
+	stmt, err := db.Prepare("INSERT INTO users (email, password, role, salt, emailToken) values (?, ?, 'USR', ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare INSERT INTO users for %v statement failed: %v", email, err)
+	}
+	defer stmt.Close()
+
+	dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+	res, err := stmt.Exec(email, dk, salt, emailToken)
+	return handleErr(res, err, "INSERT INTO users", email)
 }
 
 func updateToken(email string, token string) error {
-	stmt, err := db.Prepare("UPDATE users SET activated = CURRENT_TIMESTAMP, token = NULL where email = ? and token = ?")
+	stmt, err := db.Prepare("UPDATE users SET activated = CURRENT_TIMESTAMP, emailToken = NULL where email = ? and emailToken = ?")
 	if err != nil {
-		return fmt.Errorf("prepare %v statement failed: %v", email, err)
+		return fmt.Errorf("prepare UPDATE users for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
 	res, err := stmt.Exec(email, token)
-	if err != nil {
-		return fmt.Errorf("prepare statement failed: %v", err)
-	}
-	nr, err := res.RowsAffected()
-	if nr == 0 || err != nil {
-		return fmt.Errorf("%v rows %v, affected or err: %v", nr, email, err)
-	}
-	return nil
+	return handleErr(res, err, "UPDATE users", email)
 }
 
 func dbUpdateMailStatus(email string) error {
 	stmt, err := db.Prepare("UPDATE users set emailSent = CURRENT_TIMESTAMP where email = ?")
 	if err != nil {
-		return fmt.Errorf("prepare update %v statement failed: %v", email, err)
+		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
 	res, err := stmt.Exec(email)
+	return handleErr(res, err, "UPDATE users status", email)
+
+}
+
+func handleErr(res sql.Result, err error, info string, email string) error {
 	if err != nil {
-		return fmt.Errorf("query %v failed: %v", email, err)
+		return fmt.Errorf("%v query %v failed: %v", info, email, err)
 	}
 	nr, err := res.RowsAffected()
 	if nr == 0 || err != nil {
-		return fmt.Errorf("%v rows %v, affected or err: %v", nr, email, err)
+		return fmt.Errorf("%v %v rows %v, affected or err: %v", info, nr, email, err)
 	}
 	return nil
 }

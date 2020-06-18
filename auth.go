@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,9 +47,9 @@ type Claims struct {
 	jwt.StandardClaims
 }
 
-func auth(next func(w http.ResponseWriter, r *http.Request, claims *Claims)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, req *http.Request) {
-		authorizationHeader := req.Header.Get("Authorization")
+func auth(next func(w http.ResponseWriter, r *http.Request, claims *Claims), expiredAllowed bool) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authorizationHeader := r.Header.Get("Authorization")
 		if authorizationHeader != "" {
 			bearerToken := strings.Split(authorizationHeader, " ")
 			if len(bearerToken) == 2 {
@@ -56,31 +57,61 @@ func auth(next func(w http.ResponseWriter, r *http.Request, claims *Claims)) fun
 				token, err := jwt.ParseWithClaims(bearerToken[1], claims, func(token *jwt.Token) (i interface{}, err error) {
 					return jwtKey, nil
 				})
-				if err != nil || !token.Valid {
-					writeErr(w, http.StatusBadRequest, "AU01, could not parse token %v", err)
+
+				v, _ := err.(*jwt.ValidationError)
+				if v.Errors == jwt.ValidationErrorExpired && claims.ExpiresAt < time.Now().Unix() {
+					writeErr(w, http.StatusUnauthorized, "AU01, could not parse token %v", err)
 					return
 				}
-				next(w, req, claims)
+
+				if err != nil || !token.Valid {
+					writeErr(w, http.StatusForbidden, "AU02, could not parse token %v", err)
+					return
+				}
+
+				next(w, r, claims)
 				return
 			}
 		}
-		msg := fmt.Sprint("AU02, authorizationHeader not set")
+		msg := fmt.Sprint("AU03, authorizationHeader not set")
 		log.Print(msg)
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(msg))
 		return
 	}
 }
 
-func refresh(w http.ResponseWriter, _ *http.Request, claims *Claims) {
+func refresh(w http.ResponseWriter, r *http.Request, claims *Claims) {
+	//check if refresh token matches
+	c, err := r.Cookie("refresh")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "RE01, Cookie parsing %v failed: %v", claims.Subject, err)
+		return
+	}
+
+	dbRefreshToken, err := getRefreshToken(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "RE02, DB refresh token %v failed: %v", claims.Subject, err)
+		return
+	}
+
+	if c.Value != dbRefreshToken {
+		writeErr(w, http.StatusUnauthorized, "RE03, JWT/refresh %v failed: %v", claims.Subject, err)
+		return
+	}
+
+	//new expiry date
+	claims.ExpiresAt = time.Now().Add(exp).Unix()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "RE01, JWT %v failed: %v", claims.Subject, err)
+		writeErr(w, http.StatusInternalServerError, "RE04, JWT %v failed: %v", claims.Subject, err)
 		return
 	}
 
 	w.Header().Set("token", tokenString)
+	cookie := http.Cookie{Name: "refresh", Value: dbRefreshToken, Path: "/refresh", HttpOnly: true}
+	w.Header().Set("Set-Cookie", cookie.String())
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -105,45 +136,38 @@ func signin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "SI01, JSON, signin err %v", err)
 		return
 	}
+
+	err = validateEmail(cred.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "SI02, email is wrong %v", err)
+	}
+
 	rnd, err := genRnd(32)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "SI02, RND %v err %v", cred.Email, err)
+		writeErr(w, http.StatusBadRequest, "SI03, RND %v err %v", cred.Email, err)
 		return
 	}
-	t := hex.EncodeToString(rnd[0:16])
+	emailToken := hex.EncodeToString(rnd[0:16])
 
-	stmt, err := db.Prepare("INSERT INTO users (email, password, role, salt, token) values (?, ?, 'USR', ?, ?)")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "SI03, prepare %v statement failed: %v", cred.Email, err)
-		return
-	}
 	//https://security.stackexchange.com/questions/11221/how-big-should-salt-be
-	salt := rnd[16:32]
-	dk, err := scrypt.Key([]byte(cred.Password), salt, 32768, 8, 1, 32)
-	res, err := stmt.Exec(cred.Email, dk, salt, t)
+	err = insertUser(rnd[16:32], cred.Email, cred.Password, emailToken)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "SI04, query %v failed: %v", cred.Email, err)
-		return
-	}
-	//TODO: if duplicate send email out again
-	nr, err := res.RowsAffected()
-	if nr == 0 || err != nil {
-		writeErr(w, http.StatusBadRequest, "SI05, %v rows %v, affected or err: %v", nr, cred.Email, err)
+		writeErr(w, http.StatusBadRequest, "SI04, insert user failed: %v", err)
 		return
 	}
 
 	url := strings.Replace(options.Url, "{email}", url.QueryEscape(cred.Email), 1)
-	url = strings.Replace(url, "{token}", t, 1)
+	url = strings.Replace(url, "{token}", emailToken, 1)
 
 	err = sendEmail(url)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "SI06, send email failed: %v", url)
+		writeErr(w, http.StatusBadRequest, "SI05, send email failed: %v", url)
 		return
 	}
 
 	err = dbUpdateMailStatus(cred.Email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "SI07, db update failed: %v", err)
+		writeErr(w, http.StatusBadRequest, "SI06, db update failed: %v", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -157,25 +181,30 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err = validateEmail(cred.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "LO02, email is wrong %v", err)
+	}
+
 	result, err := dbSelect(cred.Email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "LO02, DB select, %v err %v", cred.Email, err)
+		writeErr(w, http.StatusBadRequest, "LO03, DB select, %v err %v", cred.Email, err)
 		return
 	}
 
 	if result.activated.Unix() == 0 {
-		writeErr(w, http.StatusUnauthorized, "LO03, user %v is not activated failed: %v", cred.Email, err)
+		writeErr(w, http.StatusUnauthorized, "LO04, user %v is not activated failed: %v", cred.Email, err)
 		return
 	}
 
 	dk, err := scrypt.Key([]byte(cred.Password), result.salt, 32768, 8, 1, 32)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "LO04, user %v password: %v", cred.Email, err)
+		writeErr(w, http.StatusUnauthorized, "LO05, user %v password: %v", cred.Email, err)
 		return
 	}
 
 	if bytes.Compare(dk, result.password) != 0 {
-		writeErr(w, http.StatusUnauthorized, "LO05, user %v password mismatch", cred.Email)
+		writeErr(w, http.StatusUnauthorized, "LO06, user %v password mismatch", cred.Email)
 		return
 	}
 
@@ -185,7 +214,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt: time.Now().Add(exp).Unix(),
 			Id:        hex.EncodeToString(result.id),
 			Subject:   cred.Email,
-			Audience:  options.Audience,
 		},
 	}
 
@@ -224,7 +252,7 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 	router := mux.NewRouter()
 	router.HandleFunc("/login", login).Methods("POST")
 	router.HandleFunc("/signin", signin).Methods("POST")
-	router.HandleFunc("/refresh", auth(refresh)).Methods("GET")
+	router.HandleFunc("/refresh", auth(refresh, true)).Methods("GET")
 
 	//TODO: implement reset pw via email
 	router.HandleFunc("/reset/email/{email}", nil).Methods("GET")
@@ -328,6 +356,15 @@ func sendEmail(url string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("could not update DB as status from email server: %v %v", resp.Status, resp.StatusCode)
+	}
+	return nil
+}
+
+func validateEmail(email string) error {
+	var rxEmail = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+
+	if len(email) > 254 || !rxEmail.MatchString(email) {
+		return fmt.Errorf("[%s] is not a valid email address", email)
 	}
 	return nil
 }

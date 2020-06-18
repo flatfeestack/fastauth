@@ -23,7 +23,7 @@ curl -v "http://localhost:8080/signin"   -X POST   -d "{\"email\":\"tom\",\"pass
 */
 func TestLogin(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
-	resp := doLogin("tom@test.ch", "test")
+	resp := doSignin("tom@test.ch", "test")
 
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -32,11 +32,28 @@ func TestLogin(t *testing.T) {
 	<-c
 }
 
+func TestLoginWrongEmail(t *testing.T) {
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	resp := doSignin("tomtest.ch", "test")
+
+	assert.Equal(t, 400, resp.StatusCode)
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bodyString := string(bodyBytes)
+	assert.Equal(t, 0, strings.Index(bodyString, "SI02"))
+
+	defer resp.Body.Close()
+	s.Shutdown(context.Background())
+	<-c
+}
+
 func TestLoginTwice(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
-	resp := doLogin("tom@test.ch", "test")
+	resp := doSignin("tom@test.ch", "test")
 	resp.Body.Close()
-	resp = doLogin("tom@test.ch", "test")
+	resp = doSignin("tom@test.ch", "test")
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -45,7 +62,26 @@ func TestLoginTwice(t *testing.T) {
 	bodyString := string(bodyBytes)
 
 	assert.Equal(t, 400, resp.StatusCode)
-	assert.Equal(t, 0, strings.Index(bodyString, "SI04"))
+	assert.Equal(t, 0, strings.Index(bodyString, "SI05"))
+
+	s.Shutdown(context.Background())
+	<-c
+}
+
+func TestLoginWrong(t *testing.T) {
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	resp := doSignin("tom@test.ch", "test")
+	resp.Body.Close()
+	resp = doSignin("tom@test.ch", "test")
+
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	bodyString := string(bodyBytes)
+
+	assert.Equal(t, 400, resp.StatusCode)
+	assert.Equal(t, 0, strings.Index(bodyString, "SI05"))
 
 	s.Shutdown(context.Background())
 	<-c
@@ -53,7 +89,7 @@ func TestLoginTwice(t *testing.T) {
 
 func TestConfirm(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
-	resp := doLogin("tom@test.ch", "test")
+	resp := doSignin("tom@test.ch", "test")
 	assert.Equal(t, 200, resp.StatusCode)
 
 	token := token("tom@test.ch")
@@ -64,7 +100,7 @@ func TestConfirm(t *testing.T) {
 	<-c
 }
 
-func doLogin(email string, pass string) *http.Response {
+func doSignin(email string, pass string) *http.Response {
 	type Payload struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -92,6 +128,15 @@ func doConfirm(email string, token string) *http.Response {
 }
 
 func token(email string) string {
-	r, _ := getToken(email)
+	r, _ := getEmailToken(email)
 	return string(r)
+}
+
+func getEmailToken(email string) (string, error) {
+	var emailToken string
+	err := db.QueryRow("SELECT emailToken from users where email = ?", email).Scan(&emailToken)
+	if err != nil {
+		return "", err
+	}
+	return emailToken, nil
 }

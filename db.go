@@ -3,44 +3,36 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"golang.org/x/crypto/scrypt"
 	"time"
 )
 
 type dbRes struct {
-	id        []byte
-	password  []byte
-	role      []byte
-	salt      []byte
-	activated time.Time
+	id           []byte
+	password     []byte
+	role         []byte
+	salt         []byte
+	activated    *time.Time
+	refreshToken string
 }
 
 func dbSelect(email string) (*dbRes, error) {
 	var res dbRes
-	err := db.QueryRow("SELECT id, password, role, salt, activated from users where email = ?", email).Scan(&res)
+	err := db.
+		QueryRow("SELECT id, password, role, salt, activated, refreshToken from users where email = ?", email).
+		Scan(&res.id, &res.password, &res.role, &res.salt, &res.activated, &res.refreshToken)
 	if err != nil {
 		return nil, err
 	}
 	return &res, nil
 }
 
-func getRefreshToken(email string) (string, error) {
-	var refreshToken string
-	err := db.QueryRow("SELECT refreshToken from users where email = ?", email).Scan(&refreshToken)
-	if err != nil {
-		return "", err
-	}
-	return refreshToken, nil
-}
-
-func insertUser(salt []byte, email string, password string, emailToken string) error {
+func insertUser(salt []byte, email string, dk []byte, emailToken string) error {
 	stmt, err := db.Prepare("INSERT INTO users (email, password, role, salt, emailToken) values (?, ?, 'USR', ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO users for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
 	res, err := stmt.Exec(email, dk, salt, emailToken)
 	return handleErr(res, err, "INSERT INTO users", email)
 }

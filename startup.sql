@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS users (
 	refreshToken TEXT NOT NULL DEFAULT(lower(hex(randomblob(16)))),
 	emailToken TEXT,
 	lang TEXT DEFAULT 'en',
-	created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	emailSent DATETIME,
-	activated DATETIME
+	created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	emailSent TIMESTAMP,
+	activated TIMESTAMP
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_email

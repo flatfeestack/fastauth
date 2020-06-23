@@ -8,5 +8,6 @@ require (
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible
 	github.com/stretchr/testify v1.6.1
+	github.com/xlzd/gotp v0.0.0-20181030022105-c8557ba2c119
 	golang.org/x/crypto v0.0.0-20200604202706-70a84ac30bf9
 )

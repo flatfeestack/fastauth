@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jessevdk/go-flags"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/xlzd/gotp"
 	"golang.org/x/crypto/scrypt"
 	"io/ioutil"
 	"log"
@@ -32,9 +33,11 @@ var (
 )
 
 type Opts struct {
+	Issuer   string `short:"i" long:"issuer" description:"Name of this issuer" default:"DevIssuer"`
 	Port     int    `short:"p" long:"port" description:"Port to listen on" default:"8080"`
 	DBPath   string `long:"db" description:"Path to the DB file" default:"."`
-	Url      string `short:"u" long:"url" description:"URL to email service, e.g., https://email.com/send/email/{email}/{token}" default:"http://localhost:8080/send/email/{email}/{token}"`
+	UrlEmail string `short:"u" long:"url" description:"URL to email service, e.g., https://email.com/send/email/{action}/{email}/{token}" default:"http://localhost:8080/send/email/{action}/{email}/{token}"`
+	UrlSMS   string `short:"s" long:"sms" description:"URL to email service, e.g., https://sms.com/send/sms/{sms}/{token}" default:"http://localhost:8080/send/sms/{sms}/{token}"`
 	Audience string `short:"a" long:"aud" description:"Audience comma separated string, e.g., FFS_FE, FFS_DB"`
 	Expires  int    `short:"t" long:"tokenExpires" description:"Token expiration minutes, e.g., 60" default:"60"`
 	Refresh  int    `short:"r" long:"refreshExpires" description:"Refresh token expiration days, e.g., 7" default:"7"`
@@ -42,8 +45,9 @@ type Opts struct {
 }
 
 type Credentials struct {
-	Email    string `json:"email"`
+	Email    string `json:"email,omitempty"`
 	Password string `json:"password"`
+	TOTP     string `json:"totp,omitempty"`
 }
 
 type TokenClaims struct {
@@ -54,6 +58,9 @@ type RefreshClaims struct {
 	ExpiresAt int64  `json:"exp,omitempty"`
 	Subject   string `json:"role,omitempty"`
 	Token     string `json:"token,omitempty"`
+}
+type ProvisioningUri struct {
+	Uri string `json:"uri"`
 }
 
 func (r *RefreshClaims) Valid() error {
@@ -93,7 +100,6 @@ func auth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClaims)
 }
 
 func refresh(w http.ResponseWriter, r *http.Request) {
-
 	//https://medium.com/monstar-lab-bangladesh-engineering/jwt-auth-in-go-part-2-refresh-tokens-d334777ca8a0
 
 	//check if refresh token matches
@@ -119,7 +125,7 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if result.activated == nil || result.activated.Unix() == 0 {
+	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
 		writeErr(w, http.StatusUnauthorized, "RE04, user %v is not activated failed: %v", refreshClaims.Subject, err)
 		return
 	}
@@ -135,12 +141,12 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func confirm(w http.ResponseWriter, r *http.Request) {
+func confirmEmail(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	token := vars["token"]
 	email := vars["email"]
 
-	err := updateToken(email, token)
+	err := updateEmailToken(email, token)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "CO01, update token for %v failed, token %v: %v", email, token, err)
 		return
@@ -184,8 +190,9 @@ func signin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := strings.Replace(options.Url, "{email}", url.QueryEscape(cred.Email), 1)
+	url := strings.Replace(options.UrlEmail, "{email}", url.QueryEscape(cred.Email), 1)
 	url = strings.Replace(url, "{token}", emailToken, 1)
+	url = strings.Replace(url, "{action}", "email", 1)
 
 	err = sendEmail(url)
 	if err != nil {
@@ -220,7 +227,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if result.activated == nil || result.activated.Unix() == 0 {
+	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
 		writeErr(w, http.StatusUnauthorized, "LO04, user %v is not activated failed: %v", cred.Email, err)
 		return
 	}
@@ -234,6 +241,23 @@ func login(w http.ResponseWriter, r *http.Request) {
 	if bytes.Compare(dk, result.password) != 0 {
 		writeErr(w, http.StatusUnauthorized, "LO06, user %v password mismatch", cred.Email)
 		return
+	}
+
+	if result.totp != "" {
+		totp := gotp.NewDefaultTOTP(result.totp)
+		token := totp.Now()
+		if cred.TOTP == "" && result.sms != "" && result.smsVerified != nil {
+			url := strings.Replace(options.UrlSMS, "{sms}", result.sms, 1)
+			url = strings.Replace(url, "{token}", token, 1)
+			err = sendSMS(url)
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "LO07, send sms failed %v error: %v", cred.Email, err)
+				return
+			}
+		} else if result.sms == "" && token != cred.TOTP {
+			writeErr(w, http.StatusForbidden, "LO08, wrong token, %v err %v", cred.Email, err)
+			return
+		}
 	}
 
 	err = setAccessToken(w, string(result.role), result.id, cred.Email)
@@ -250,7 +274,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 }
 
 func setAccessToken(w http.ResponseWriter, role string, id []byte, subject string) error {
-
 	tokenClaims := &TokenClaims{
 		Role: role,
 		StandardClaims: jwt.StandardClaims{
@@ -292,16 +315,192 @@ func setRefreshToken(w http.ResponseWriter, subject string, token string) error 
 	return nil
 }
 
-func send(w http.ResponseWriter, r *http.Request) {
+func displayEmail(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	token := vars["token"]
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
 		log.Printf("decoding error %v", err)
 	}
+	action := vars["action"]
 
-	fmt.Printf("go to URL: http://%s/confirm/%s/%s\n", r.Host, email, token)
+	if action == "email" {
+		fmt.Printf("go to URL: http://%s/confirm/email/%s/%s\n", r.Host, email, token)
+	} else if action == "forgot" {
+		fmt.Printf("go to URL: http://%s/confirm/reset/email/%s/%s\n", r.Host, email, token)
+	}
+
 	r.Body.Close()
+	w.WriteHeader(http.StatusOK)
+}
+
+func displaySMS(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	token := vars["token"]
+	sms, err := url.QueryUnescape(vars["sms"])
+	if err != nil {
+		log.Printf("decoding error %v", err)
+	}
+	fmt.Printf("Sent to NR %s token [%s]\n", sms, token)
+}
+
+func resetEmail(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	email, err := url.QueryUnescape(vars["email"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "RE01, query email %v err: %v", vars["email"], err)
+		return
+	}
+
+	rnd, err := genRnd(16)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "RE02, RND %v err %v", email, err)
+		return
+	}
+	forgetEmailToken := hex.EncodeToString(rnd)
+
+	err = updateEmailForgotToken(email, forgetEmailToken)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "RE03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
+		return
+	}
+
+	url := strings.Replace(options.UrlEmail, "{email}", email, 1)
+	url = strings.Replace(url, "{token}", forgetEmailToken, 1)
+	url = strings.Replace(url, "{action}", "forgot", 1)
+
+	err = sendEmail(url)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "RE04, send email failed: %v", url)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func confirmReset(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	email, err := url.QueryUnescape(vars["email"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CR01, query email %v err: %v", vars["email"], err)
+		return
+	}
+
+	token, err := url.QueryUnescape(vars["token"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CR02, query token %v err: %v", vars["token"], err)
+		return
+	}
+
+	var cred Credentials
+	err = json.NewDecoder(r.Body).Decode(&cred)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CR03, JSON, confirmReset err %v", err)
+		return
+	}
+
+	err = validatePassword(cred.Password)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CR04, password is wrong %v", err)
+	}
+
+	salt, err := genRnd(16)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CR05, RND %v err %v", email, err)
+		return
+	}
+
+	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
+	err = resetPassword(salt, email, dk, token)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CR06, update user failed: %v", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
+	rnd, err := genRnd(32)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "ST01, RND %v err %v", claims.Subject, err)
+		return
+	}
+	secret := hex.EncodeToString(rnd)
+	err = updateTOTP(claims.Subject, secret)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "ST02, update failed %v err %v", claims.Subject, err)
+		return
+	}
+
+	totp := gotp.NewDefaultTOTP(secret)
+	p := ProvisioningUri{}
+	p.Uri = totp.ProvisioningUri(claims.Subject, options.Issuer)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(p)
+}
+
+func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	vars := mux.Vars(r)
+	sms, err := url.QueryUnescape(vars["sms"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "SS01, query sms %v err: %v", vars["sms"], err)
+		return
+	}
+
+	rnd, err := genRnd(32)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "SS02, RND %v err %v", claims.Subject, err)
+		return
+	}
+	secret := hex.EncodeToString(rnd)
+	err = updateSMS(claims.Subject, secret, sms)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "SS03, updateSMS failed %v err %v", claims.Subject, err)
+		return
+	}
+
+	totp := gotp.NewDefaultTOTP(secret)
+
+	url := strings.Replace(options.UrlSMS, "{sms}", sms, 1)
+	url = strings.Replace(url, "{token}", totp.Now(), 1)
+
+	err = sendSMS(url)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "SS04, send SMS failed %v err %v", claims.Subject, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func confirmSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	vars := mux.Vars(r)
+	token, err := url.QueryUnescape(vars["token"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "CT01, query token %v err: %v", vars["token"], err)
+		return
+	}
+
+	result, err := dbSelect(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "CT02, DB select, %v err %v", claims.Subject, err)
+		return
+	}
+
+	totp := gotp.NewDefaultTOTP(result.totp)
+	if token != totp.Now() {
+		writeErr(w, http.StatusUnauthorized, "CT03, token different, %v err %v", claims.Subject, err)
+		return
+	}
+	err = updateSMSVerified(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "CT04, DB select, %v err %v", claims.Subject, err)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -325,27 +524,19 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 	router := mux.NewRouter()
 	router.HandleFunc("/login", login).Methods("POST")
 	router.HandleFunc("/signin", signin).Methods("POST")
-	router.HandleFunc("/refresh", refresh).Methods("GET")
+	router.HandleFunc("/refresh", refresh).Methods("POST")
+	router.HandleFunc("/reset/email/{email}", resetEmail).Methods("POST")
 
-	//TODO: implement reset pw via email
-	router.HandleFunc("/reset/email/{email}", nil).Methods("GET")
+	router.HandleFunc("/setup/totp", auth(setupTOTP)).Methods("POST")
+	router.HandleFunc("/setup/sms/{sms}", auth(setupSMS)).Methods("POST")
 
-	//TODO: implement reset TOTP, SMS via email
-	router.HandleFunc("/reset/totp/{email}", nil).Methods("GET")
-	router.HandleFunc("/reset/sms/{email}", nil).Methods("GET")
-
-	//TODO: implement 2FA with TOTP, SMS
-	router.HandleFunc("/setup/totp", nil).Methods("GET")
-	router.HandleFunc("/setup/sms/setup", nil).Methods("GET")
-
-	//TODO: implement 2FA with TOTP, SMS
-	router.HandleFunc("/confirm/totp/{totp-token}", nil).Methods("GET")
-	router.HandleFunc("/confirm/sms/{sms-token}", nil).Methods("GET")
-	router.HandleFunc("/confirm/email/{email}/{token}", confirm).Methods("GET")
+	router.HandleFunc("/confirm/email/{email}/{token}", confirmEmail).Methods("POST")
+	router.HandleFunc("/confirm/sms/{token}", auth(confirmSMS)).Methods("POST")
+	router.HandleFunc("/confirm/reset/email/{email}/{token}", confirmReset).Methods("POST")
 
 	//display for debug and testing
-	router.HandleFunc("/send/email/{email}/{token}", send).Methods("GET")
-	router.HandleFunc("/send/sms/{sms-nr}/{token}", send).Methods("GET")
+	router.HandleFunc("/send/email/{action}/{email}/{token}", displayEmail).Methods("GET")
+	router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("GET")
 
 	var err error
 	db, err = initDB()
@@ -418,6 +609,21 @@ func writeErr(w http.ResponseWriter, code int, format string, a ...interface{}) 
 }
 
 func sendEmail(url string) error {
+	c := &http.Client{
+		Timeout: 15 * time.Second,
+	}
+	resp, err := c.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("could not update DB as status from email server: %v %v", resp.Status, resp.StatusCode)
+	}
+	return nil
+}
+
+func sendSMS(url string) error {
 	c := &http.Client{
 		Timeout: 15 * time.Second,
 	}

@@ -24,7 +24,7 @@ const (
 curl -v "http://localhost:8080/signin"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
 */
 func TestSignin(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
 	resp := doSignin("tom@test.ch", "testtest")
 
 	assert.Equal(t, 200, resp.StatusCode)
@@ -35,7 +35,7 @@ func TestSignin(t *testing.T) {
 }
 
 func TestSigninWrongEmail(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
 	resp := doSignin("tomtest.ch", "testtest")
 
 	assert.Equal(t, 400, resp.StatusCode)
@@ -52,7 +52,7 @@ func TestSigninWrongEmail(t *testing.T) {
 }
 
 func TestSigninTwice(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
 	resp := doSignin("tom@test.ch", "testtest")
 	resp.Body.Close()
 	resp = doSignin("tom@test.ch", "testtest")
@@ -71,7 +71,7 @@ func TestSigninTwice(t *testing.T) {
 }
 
 func TestSigninWrong(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
 	resp := doSignin("tom@test.ch", "testtest")
 	resp.Body.Close()
 	resp = doSignin("tom@test.ch", "testtest")
@@ -90,7 +90,7 @@ func TestSigninWrong(t *testing.T) {
 }
 
 func TestConfirm(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
 	resp := doSignin("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -103,7 +103,7 @@ func TestConfirm(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
 	resp := doSignin("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -119,7 +119,7 @@ func TestLogin(t *testing.T) {
 }
 
 func TestLoginFalse(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}", Dev: true})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -136,7 +136,7 @@ func TestLoginFalse(t *testing.T) {
 }
 
 func TestRefresh(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, Url: testUrl + "/send/email/{email}/{token}", Dev: true, Refresh: 1})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true, Refresh: 1})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -150,6 +150,44 @@ func TestRefresh(t *testing.T) {
 	<-c
 }
 
+func TestReset(t *testing.T) {
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true, Refresh: 1})
+
+	resp := doAll("tom@test.ch", "testtest")
+	assert.Equal(t, 200, resp.StatusCode)
+
+	resp = doReset("tom@test.ch")
+	assert.Equal(t, 200, resp.StatusCode)
+
+	token, _ := getForgotEmailToken("tom@test.ch")
+
+	resp = doConfirmReset("tom@test.ch", token, "testtest2")
+	assert.Equal(t, 200, resp.StatusCode)
+
+	resp = doLogin("tom@test.ch", "testtest2")
+	assert.Equal(t, 200, resp.StatusCode)
+
+	s.Shutdown(context.Background())
+	<-c
+}
+
+func doConfirmReset(email string, token string, password string) *http.Response {
+	data := Credentials{
+		Password: password,
+	}
+	payloadBytes, _ := json.Marshal(data)
+	body := bytes.NewReader(payloadBytes)
+	req, _ := http.NewRequest("POST", testUrl+"/confirm/reset/email/"+email+"/"+token, body)
+	resp, _ := http.DefaultClient.Do(req)
+	return resp
+}
+
+func doReset(email string) *http.Response {
+	req, _ := http.NewRequest("POST", testUrl+"/reset/email/"+email, nil)
+	resp, _ := http.DefaultClient.Do(req)
+	return resp
+}
+
 func doAll(email string, pass string) *http.Response {
 	resp := doSignin(email, pass)
 	token := token(email)
@@ -159,7 +197,7 @@ func doAll(email string, pass string) *http.Response {
 }
 
 func doRefresh(cookie string, token string) *http.Response {
-	req, _ := http.NewRequest("GET", testUrl+"/refresh", nil)
+	req, _ := http.NewRequest("POST", testUrl+"/refresh", nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer: "+token)
 	c := http.Cookie{Name: "refresh", Value: cookie, Path: "/refresh", Secure: false, HttpOnly: true}
@@ -215,4 +253,13 @@ func getEmailToken(email string) (string, error) {
 		return "", err
 	}
 	return emailToken, nil
+}
+
+func getForgotEmailToken(email string) (string, error) {
+	var forgetEmailToken string
+	err := db.QueryRow("SELECT forgetEmailToken from users where email = ?", email).Scan(&forgetEmailToken)
+	if err != nil {
+		return "", err
+	}
+	return forgetEmailToken, nil
 }

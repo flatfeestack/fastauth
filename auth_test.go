@@ -4,10 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/stretchr/testify/assert"
+	"github.com/xlzd/gotp"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strings"
 	"testing"
@@ -21,28 +20,25 @@ const (
 )
 
 /*
-curl -v "http://localhost:8080/signin"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
+curl -v "http://localhost:8080/signup"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
 */
-func TestSignin(t *testing.T) {
+func TestSignup(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
-	resp := doSignin("tom@test.ch", "testtest")
+	resp := doSignup("tom@test.ch", "testtest")
 
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
 
-func TestSigninWrongEmail(t *testing.T) {
+func TestSignupWrongEmail(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
-	resp := doSignin("tomtest.ch", "testtest")
+	resp := doSignup("tomtest.ch", "testtest")
 
-	assert.Equal(t, 400, resp.StatusCode)
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
 	assert.Equal(t, 0, strings.Index(bodyString, "SI02"))
 
@@ -51,69 +47,66 @@ func TestSigninWrongEmail(t *testing.T) {
 	<-c
 }
 
-func TestSigninTwice(t *testing.T) {
+func TestSignupTwice(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
-	resp := doSignin("tom@test.ch", "testtest")
+	resp := doSignup("tom@test.ch", "testtest")
 	resp.Body.Close()
-	resp = doSignin("tom@test.ch", "testtest")
+	resp = doSignup("tom@test.ch", "testtest")
 
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
 
-	assert.Equal(t, 400, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, 0, strings.Index(bodyString, "SI05"))
 
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
 
-func TestSigninWrong(t *testing.T) {
+func TestSignupWrong(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
-	resp := doSignin("tom@test.ch", "testtest")
-	resp.Body.Close()
-	resp = doSignin("tom@test.ch", "testtest")
+	resp := doSignup("tom@test.ch", "testtest")
+	resp = doSignup("tom@test.ch", "testtest")
 
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
 
-	assert.Equal(t, 400, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, 0, strings.Index(bodyString, "SI05"))
 
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
 
 func TestConfirm(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
-	resp := doSignin("tom@test.ch", "testtest")
+	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
 	token := token("tom@test.ch")
 	resp = doConfirm("tom@test.ch", token)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
 
 func TestLogin(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
-	resp := doSignin("tom@test.ch", "testtest")
-	assert.Equal(t, 200, resp.StatusCode)
+	resp := doSignup("tom@test.ch", "testtest")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	token := token("tom@test.ch")
 	resp = doConfirm("tom@test.ch", token)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest")
-	assert.Equal(t, 200, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest", "")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
@@ -121,16 +114,17 @@ func TestLogin(t *testing.T) {
 func TestLoginFalse(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
 	resp := doAll("tom@test.ch", "testtest")
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest")
-	assert.Equal(t, 200, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest", "")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest2")
-	assert.Equal(t, 401, resp.StatusCode)
-	resp = doLogin("tom@test.ch2", "testtest")
-	assert.Equal(t, 401, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest2", "")
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	resp = doLogin("tom@test.ch2", "testtest", "")
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
@@ -138,14 +132,17 @@ func TestLoginFalse(t *testing.T) {
 func TestRefresh(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true, Refresh: 1})
 	resp := doAll("tom@test.ch", "testtest")
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	token1 := resp.Header.Get("Token")
 
+	time.Sleep(time.Second)
 	cookie := resp.Cookies()[0]
-	token := resp.Header.Get("Token")
-	resp = doRefresh(cookie.Value, token)
-	assert.Equal(t, 200, resp.StatusCode)
+	resp = doRefresh(cookie.Value)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	token2 := resp.Header.Get("Token")
+	assert.NotEqual(t, token1, token2)
 
-	fmt.Printf("%s token, %v cookie", token, cookie.Value)
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
 }
@@ -154,21 +151,115 @@ func TestReset(t *testing.T) {
 	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true, Refresh: 1})
 
 	resp := doAll("tom@test.ch", "testtest")
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doReset("tom@test.ch")
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	token, _ := getForgotEmailToken("tom@test.ch")
 
 	resp = doConfirmReset("tom@test.ch", token, "testtest2")
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest2")
-	assert.Equal(t, 200, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest2", "")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
+	defer resp.Body.Close()
 	s.Shutdown(context.Background())
 	<-c
+}
+
+func TestResetFailed(t *testing.T) {
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true, Refresh: 1})
+
+	resp := doAll("tom@test.ch", "testtest")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp = doReset("tom@test.ch")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	token, _ := getForgotEmailToken("tom@test.ch")
+
+	resp = doConfirmReset("tom@test.ch", token, "testtest2")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp = doLogin("tom@test.ch", "testtest", "")
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	defer resp.Body.Close()
+	s.Shutdown(context.Background())
+	<-c
+}
+
+func TestTOTP(t *testing.T) {
+	s, c := server(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
+	resp := doAll("tom@test.ch", "testtest")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	token := resp.Header.Get("Token")
+
+	resp = doTOTP(token)
+	p := ProvisioningUri{}
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+	json.Unmarshal(bodyBytes, &p)
+	secret := strings.SplitN(p.Uri, "=", 2)
+	secret = strings.SplitN(secret[1], "&", 2)
+	totp := newTOTP(secret[0])
+	conf := totp.Now()
+
+	resp = doTOTPConfirm(conf, token)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	defer resp.Body.Close()
+	s.Shutdown(context.Background())
+	<-c
+}
+
+func TestLoginTOTP(t *testing.T) {
+	s, c := server(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
+	resp := doAll("tom@test.ch", "testtest")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	token := resp.Header.Get("Token")
+
+	totp := doAllTOTP(token)
+
+	resp = doLogin("tom@test.ch", "testtest", totp.Now())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp = doLogin("tom@test.ch", "testtest", "")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+
+	defer resp.Body.Close()
+	s.Shutdown(context.Background())
+	<-c
+}
+
+func doTOTP(token string) *http.Response {
+	req, _ := http.NewRequest("POST", testUrl+"/setup/totp", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, _ := http.DefaultClient.Do(req)
+	return resp
+}
+
+func doTOTPConfirm(conf string, token string) *http.Response {
+	req, _ := http.NewRequest("POST", testUrl+"/confirm/totp/"+conf, nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, _ := http.DefaultClient.Do(req)
+	return resp
+}
+
+func doAllTOTP(token string) *gotp.TOTP {
+	resp := doTOTP(token)
+	p := ProvisioningUri{}
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+	json.Unmarshal(bodyBytes, &p)
+	secret := strings.SplitN(p.Uri, "=", 2)
+	secret = strings.SplitN(secret[1], "&", 2)
+	totp := newTOTP(secret[0])
+	conf := totp.Now()
+	resp = doTOTPConfirm(conf, token)
+	return totp
 }
 
 func doConfirmReset(email string, token string, password string) *http.Response {
@@ -177,39 +268,40 @@ func doConfirmReset(email string, token string, password string) *http.Response 
 	}
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)
-	req, _ := http.NewRequest("POST", testUrl+"/confirm/reset/email/"+email+"/"+token, body)
+	req, _ := http.NewRequest("POST", testUrl+"/confirm/reset/"+email+"/"+token, body)
+	req.Header.Set("Content-Type", "application/json")
 	resp, _ := http.DefaultClient.Do(req)
 	return resp
 }
 
 func doReset(email string) *http.Response {
-	req, _ := http.NewRequest("POST", testUrl+"/reset/email/"+email, nil)
+	req, _ := http.NewRequest("POST", testUrl+"/reset/"+email, nil)
 	resp, _ := http.DefaultClient.Do(req)
 	return resp
 }
 
 func doAll(email string, pass string) *http.Response {
-	resp := doSignin(email, pass)
+	resp := doSignup(email, pass)
 	token := token(email)
 	resp = doConfirm(email, token)
-	resp = doLogin(email, pass)
+	resp = doLogin(email, pass, "")
 	return resp
 }
 
-func doRefresh(cookie string, token string) *http.Response {
+func doRefresh(cookie string) *http.Response {
 	req, _ := http.NewRequest("POST", testUrl+"/refresh", nil)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer: "+token)
 	c := http.Cookie{Name: "refresh", Value: cookie, Path: "/refresh", Secure: false, HttpOnly: true}
 	req.AddCookie(&c)
 	resp, _ := http.DefaultClient.Do(req)
 	return resp
 }
 
-func doLogin(email string, pass string) *http.Response {
+func doLogin(email string, pass string, totp string) *http.Response {
 	data := Credentials{
 		Email:    email,
 		Password: pass,
+		TOTP:     totp,
 	}
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)
@@ -219,7 +311,7 @@ func doLogin(email string, pass string) *http.Response {
 	return resp
 }
 
-func doSignin(email string, pass string) *http.Response {
+func doSignup(email string, pass string) *http.Response {
 	data := Credentials{
 		Email:    email,
 		Password: pass,
@@ -227,7 +319,7 @@ func doSignin(email string, pass string) *http.Response {
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)
 
-	req, _ := http.NewRequest("POST", testUrl+"/signin", body)
+	req, _ := http.NewRequest("POST", testUrl+"/signup", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := http.DefaultClient.Do(req)
 	return resp
@@ -237,7 +329,7 @@ func doConfirm(email string, token string) *http.Response {
 	c := &http.Client{
 		Timeout: 15 * time.Second,
 	}
-	resp, _ := c.Get(testUrl + "/confirm/email/" + email + "/" + token)
+	resp, _ := c.Post(testUrl+"/confirm/signup/"+email+"/"+token, "application/json", nil)
 	return resp
 }
 

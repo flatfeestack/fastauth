@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
 	emailSent TIMESTAMP,
 	emailVerified TIMESTAMP,
 	smsVerified TIMESTAMP,
+	totpVerified TIMESTAMP,
 	forgetEmail TIMESTAMP
 );
 

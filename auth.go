@@ -3,8 +3,9 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
+	"encoding/base32"
 	"encoding/json"
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
@@ -130,13 +131,13 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if refreshClaims.Token != result.refreshToken {
+	if result.refreshToken == nil || refreshClaims.Token != *result.refreshToken {
 		writeErr(w, http.StatusInternalServerError, "RE05, DB refresh token mismatch %v failed: %v", refreshClaims.Subject, err)
 		return
 	}
 
 	setAccessToken(w, string(result.role), result.id, refreshClaims.Subject)
-	setRefreshToken(w, refreshClaims.Subject, result.refreshToken)
+	setRefreshToken(w, refreshClaims.Subject, *result.refreshToken)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -178,7 +179,7 @@ func signin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "SI04, RND %v err %v", cred.Email, err)
 		return
 	}
-	emailToken := hex.EncodeToString(rnd[0:16])
+	emailToken := base32.StdEncoding.EncodeToString(rnd[0:16])
 
 	//https://security.stackexchange.com/questions/11221/how-big-should-salt-be
 
@@ -243,31 +244,44 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if result.totp != "" {
-		totp := gotp.NewDefaultTOTP(result.totp)
+	//SMS logic
+	if result.totp != nil && result.sms != nil && result.smsVerified != nil {
+		totp := newTOTP(*result.totp)
 		token := totp.Now()
-		if cred.TOTP == "" && result.sms != "" && result.smsVerified != nil {
-			url := strings.Replace(options.UrlSMS, "{sms}", result.sms, 1)
+		if cred.TOTP == "" {
+			url := strings.Replace(options.UrlSMS, "{sms}", *result.sms, 1)
 			url = strings.Replace(url, "{token}", token, 1)
 			err = sendSMS(url)
 			if err != nil {
 				writeErr(w, http.StatusUnauthorized, "LO07, send sms failed %v error: %v", cred.Email, err)
 				return
 			}
-		} else if result.sms == "" && token != cred.TOTP {
-			writeErr(w, http.StatusForbidden, "LO08, wrong token, %v err %v", cred.Email, err)
+			writeErr(w, http.StatusTeapot, "LO08, waiting for sms verification: %v", cred.Email)
+			return
+		} else if token != cred.TOTP {
+			writeErr(w, http.StatusForbidden, "LO09, wrong token, %v err %v", cred.Email, err)
+			return
+		}
+	}
+
+	//TOTP logic
+	if result.totp != nil && result.totpVerified != nil {
+		totp := newTOTP(*result.totp)
+		token := totp.Now()
+		if token != cred.TOTP {
+			writeErr(w, http.StatusForbidden, "LO10, wrong token, %v err %v", cred.Email, err)
 			return
 		}
 	}
 
 	err = setAccessToken(w, string(result.role), result.id, cred.Email)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "LO07, setAccessToken %v error: %v", cred.Email, err)
+		writeErr(w, http.StatusUnauthorized, "LO11, setAccessToken %v error: %v", cred.Email, err)
 		return
 	}
-	err = setRefreshToken(w, cred.Email, result.refreshToken)
+	err = setRefreshToken(w, cred.Email, *result.refreshToken)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "LO08, setRefreshToken %v error: %v", cred.Email, err)
+		writeErr(w, http.StatusUnauthorized, "LO12, setRefreshToken %v error: %v", cred.Email, err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -278,7 +292,7 @@ func setAccessToken(w http.ResponseWriter, role string, id []byte, subject strin
 		Role: role,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: time.Now().Add(tokenExp).Unix(),
-			Id:        hex.EncodeToString(id),
+			Id:        base32.StdEncoding.EncodeToString(id),
 			Subject:   subject,
 		},
 	}
@@ -357,7 +371,7 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "RE02, RND %v err %v", email, err)
 		return
 	}
-	forgetEmailToken := hex.EncodeToString(rnd)
+	forgetEmailToken := base32.StdEncoding.EncodeToString(rnd)
 
 	err = updateEmailForgotToken(email, forgetEmailToken)
 	if err != nil {
@@ -421,25 +435,54 @@ func confirmReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
-	rnd, err := genRnd(32)
+	rnd, err := genRnd(20)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ST01, RND %v err %v", claims.Subject, err)
 		return
 	}
-	secret := hex.EncodeToString(rnd)
+
+	secret := base32.StdEncoding.EncodeToString(rnd)
 	err = updateTOTP(claims.Subject, secret)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ST02, update failed %v err %v", claims.Subject, err)
 		return
 	}
 
-	totp := gotp.NewDefaultTOTP(secret)
+	totp := newTOTP(secret)
 	p := ProvisioningUri{}
 	p.Uri = totp.ProvisioningUri(claims.Subject, options.Issuer)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(p)
+}
+
+func confirmTOTP(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	vars := mux.Vars(r)
+	token, err := url.QueryUnescape(vars["token"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "TT01, query token %v err: %v", vars["token"], err)
+		return
+	}
+
+	result, err := dbSelect(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "TT02, DB select, %v err %v", claims.Subject, err)
+		return
+	}
+
+	totp := newTOTP(*result.totp)
+	if token != totp.Now() {
+		writeErr(w, http.StatusUnauthorized, "TT03, token different, %v err %v", claims.Subject, err)
+		return
+	}
+	err = updateTOTPVerified(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "TT04, DB select, %v err %v", claims.Subject, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
@@ -450,19 +493,19 @@ func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	rnd, err := genRnd(32)
+	rnd, err := genRnd(20)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "SS02, RND %v err %v", claims.Subject, err)
 		return
 	}
-	secret := hex.EncodeToString(rnd)
+	secret := base32.StdEncoding.EncodeToString(rnd)
 	err = updateSMS(claims.Subject, secret, sms)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "SS03, updateSMS failed %v err %v", claims.Subject, err)
 		return
 	}
 
-	totp := gotp.NewDefaultTOTP(secret)
+	totp := newTOTP(secret)
 
 	url := strings.Replace(options.UrlSMS, "{sms}", sms, 1)
 	url = strings.Replace(url, "{token}", totp.Now(), 1)
@@ -490,7 +533,7 @@ func confirmSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	totp := gotp.NewDefaultTOTP(result.totp)
+	totp := newTOTP(*result.totp)
 	if token != totp.Now() {
 		writeErr(w, http.StatusUnauthorized, "CT03, token different, %v err %v", claims.Subject, err)
 		return
@@ -523,16 +566,16 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 
 	router := mux.NewRouter()
 	router.HandleFunc("/login", login).Methods("POST")
-	router.HandleFunc("/signin", signin).Methods("POST")
+	router.HandleFunc("/signup", signin).Methods("POST")
 	router.HandleFunc("/refresh", refresh).Methods("POST")
-	router.HandleFunc("/reset/email/{email}", resetEmail).Methods("POST")
+	router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
+	router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("POST")
+	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
 
 	router.HandleFunc("/setup/totp", auth(setupTOTP)).Methods("POST")
+	router.HandleFunc("/confirm/totp/{token}", auth(confirmTOTP)).Methods("POST")
 	router.HandleFunc("/setup/sms/{sms}", auth(setupSMS)).Methods("POST")
-
-	router.HandleFunc("/confirm/email/{email}/{token}", confirmEmail).Methods("POST")
 	router.HandleFunc("/confirm/sms/{token}", auth(confirmSMS)).Methods("POST")
-	router.HandleFunc("/confirm/reset/email/{email}/{token}", confirmReset).Methods("POST")
 
 	//display for debug and testing
 	router.HandleFunc("/send/email/{action}/{email}/{token}", displayEmail).Methods("GET")
@@ -652,4 +695,12 @@ func validatePassword(password string) error {
 		return fmt.Errorf("password is less than 8 characters")
 	}
 	return nil
+}
+
+func newTOTP(secret string) *gotp.TOTP {
+	hasher := &gotp.Hasher{
+		HashName: "sha256",
+		Digest:   sha256.New,
+	}
+	return gotp.NewTOTP(secret, 6, 30, hasher)
 }

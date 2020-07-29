@@ -1,0 +1,11 @@
+               _   _
+    /\        | | | |
+   /  \  _   _| |_| |__
+  / /\ \| | | | __| '_ \
+ / ____ \ |_| | |_| | | |
+/_/    \_\__,_|\__|_| |_|
+
+GoVersion: {{ .GoVersion }}, GOOS: {{ .GOOS }}, GOARCH: {{ .GOARCH }}, NumCPU: {{ .NumCPU }}
+GOPATH: {{ .GOPATH }}, GOROOT: {{ .GOROOT }}, ENV: {{ .Env "GOPATH" }}
+Compiler: {{ .Compiler }}, Now: {{ .Now "Monday, 2 Jan 2006" }}
+===============================================

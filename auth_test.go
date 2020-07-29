@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ const (
 curl -v "http://localhost:8080/signup"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
 */
 func TestSignup(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
 	resp := doSignup("tom@test.ch", "testtest")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -40,7 +41,7 @@ func TestSignupWrongEmail(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
-	assert.Equal(t, 0, strings.Index(bodyString, "SI02"))
+	assert.Equal(t, 0, strings.Index(bodyString, "ERR-signup-02"))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -57,7 +58,7 @@ func TestSignupTwice(t *testing.T) {
 	bodyString := string(bodyBytes)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, 0, strings.Index(bodyString, "SI05"))
+	assert.Equal(t, 0, strings.Index(bodyString, "ERR-signup-06"))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -73,7 +74,8 @@ func TestSignupWrong(t *testing.T) {
 	bodyString := string(bodyBytes)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, 0, strings.Index(bodyString, "SI05"))
+	log.Println(bodyString)
+	assert.Equal(t, 0, strings.Index(bodyString, "ERR-signup-06"))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -81,7 +83,7 @@ func TestSignupWrong(t *testing.T) {
 }
 
 func TestConfirm(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -95,7 +97,7 @@ func TestConfirm(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: true})
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -120,9 +122,14 @@ func TestLoginFalse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest2", "")
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, "ERR-login-06, user tom@test.ch password mismatch", string(bodyBytes))
+
 	resp = doLogin("tom@test.ch2", "testtest", "")
+	bodyBytes, _ = ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Equal(t, "ERR-login-03, DB select, tom@test.ch2 err sql: no rows in result set", string(bodyBytes))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -184,7 +191,7 @@ func TestResetFailed(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest", "")
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())

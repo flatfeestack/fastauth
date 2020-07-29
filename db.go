@@ -119,7 +119,7 @@ func updateTOTPVerified(email string) error {
 	return handleErr(res, err, "UPDATE users totp timestamp", email)
 }
 
-func dbUpdateMailStatus(email string) error {
+func updateMailStatus(email string) error {
 	stmt, err := db.Prepare("UPDATE users set emailSent = CURRENT_TIMESTAMP WHERE email = ?")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)

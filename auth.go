@@ -581,7 +581,7 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 	router.HandleFunc("/refresh", refresh).Methods("POST")
 	router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 	router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
-	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("GET")
+	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
 
 	router.HandleFunc("/setup/totp", auth(setupTOTP)).Methods("POST")
 	router.HandleFunc("/confirm/totp/{token}", auth(confirmTOTP)).Methods("POST")

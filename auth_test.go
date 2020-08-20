@@ -336,7 +336,7 @@ func doConfirm(email string, token string) *http.Response {
 	c := &http.Client{
 		Timeout: 15 * time.Second,
 	}
-	resp, _ := c.Post(testUrl+"/confirm/signup/"+email+"/"+token, "application/json", nil)
+	resp, _ := c.Get(testUrl + "/confirm/signup/" + email + "/" + token)
 	return resp
 }
 

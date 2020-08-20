@@ -631,20 +631,23 @@ func initDB() (*sql.DB, error) {
 	}
 
 	//this will create or alter tables
-	file, err := ioutil.ReadFile("startup.sql")
-	if err != nil {
-		return nil, err
-	}
-
-	requests := strings.Split(string(file), ";")
-	for _, request := range requests {
-		request = strings.Replace(request, "\n", "", -1)
-		request = strings.Replace(request, "\t", "", -1)
-		_, err = db.Exec(request)
+	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
+	if _, err := os.Stat("startup.sql"); err == nil {
+		file, err := ioutil.ReadFile("startup.sql")
 		if err != nil {
-			return nil, fmt.Errorf("[%v] %v", request, err)
+			return nil, err
+		}
+		requests := strings.Split(string(file), ";")
+		for _, request := range requests {
+			request = strings.Replace(request, "\n", "", -1)
+			request = strings.Replace(request, "\t", "", -1)
+			_, err = db.Exec(request)
+			if err != nil {
+				return nil, fmt.Errorf("[%v] %v", request, err)
+			}
 		}
 	}
+
 	return db, nil
 }
 

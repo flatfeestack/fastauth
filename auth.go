@@ -324,9 +324,9 @@ func displayEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if action == "signup" {
-		fmt.Printf("go to URL: http://%s/confirm/signup/email/%s/%s\n", r.Host, email, token)
+		fmt.Printf("go to URL: http://%s/confirm/signup/%s/%s\n", r.Host, email, token)
 	} else if action == "reset" {
-		fmt.Printf("go to URL: http://%s/confirm/reset/email/%s/%s\n", r.Host, email, token)
+		fmt.Printf("go to URL: http://%s/confirm/reset/%s/%s\n", r.Host, email, token)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -580,8 +580,8 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 	router.HandleFunc("/signup", signup).Methods("POST")
 	router.HandleFunc("/refresh", refresh).Methods("POST")
 	router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
-	router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("POST")
-	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
+	router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
+	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("GET")
 
 	router.HandleFunc("/setup/totp", auth(setupTOTP)).Methods("POST")
 	router.HandleFunc("/confirm/totp/{token}", auth(confirmTOTP)).Methods("POST")

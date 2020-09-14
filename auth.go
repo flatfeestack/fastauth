@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/dimiro1/banner"
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/jessevdk/go-flags"
 	_ "github.com/mattn/go-sqlite3"
@@ -39,15 +40,17 @@ const (
 )
 
 type Opts struct {
-	Issuer   string `short:"i" long:"issuer" description:"Name of this issuer" default:"DevIssuer"`
-	Port     int    `short:"p" long:"port" description:"Port to listen on" default:"8080"`
-	DBPath   string `long:"db" description:"Path to the DB file" default:"."`
-	UrlEmail string `short:"u" long:"url" description:"URL to email service, e.g., https://email.com/send/email/{action}/{email}/{token}" default:"http://localhost:8080/send/email/{action}/{email}/{token}"`
-	UrlSMS   string `short:"s" long:"sms" description:"URL to email service, e.g., https://sms.com/send/sms/{sms}/{token}" default:"http://localhost:8080/send/sms/{sms}/{token}"`
-	Audience string `short:"a" long:"aud" description:"Audience comma separated string, e.g., FFS_FE, FFS_DB"`
-	Expires  int    `short:"t" long:"tokenExpires" description:"Token expiration minutes, e.g., 60" default:"60"`
-	Refresh  int    `short:"r" long:"refreshExpires" description:"Refresh token expiration days, e.g., 7" default:"7"`
-	Dev      bool   `short:"d" long:"dev" description:"Developer mode"`
+	Issuer    string `short:"i" long:"issuer" description:"Name of this issuer" default:"DevIssuer"`
+	Port      int    `short:"p" long:"port" description:"Port to listen on" default:"8080"`
+	DBPath    string `long:"db" description:"Path to the DB file" default:"."`
+	UrlEmail  string `short:"u" long:"url" description:"URL to email service, e.g., https://email.com/send/email/{action}/{email}/{token}" default:"http://localhost:8080/send/email/{action}/{email}/{token}"`
+	UrlSMS    string `short:"s" long:"sms" description:"URL to email service, e.g., https://sms.com/send/sms/{sms}/{token}" default:"http://localhost:8080/send/sms/{sms}/{token}"`
+	Audience  string `short:"a" long:"aud" description:"Audience comma separated string, e.g., FFS_FE, FFS_DB"`
+	Expires   int    `short:"t" long:"tokenExpires" description:"Token expiration minutes, e.g., 60" default:"60"`
+	Refresh   int    `short:"r" long:"refreshExpires" description:"Refresh token expiration days, e.g., 7" default:"7"`
+	OAuthUser string `long:"oauthPass" description:"OAuth username for HTTP BasicAuth to access the endpoint" default:"user"`
+	OAuthPass string `long:"oauthUser" description:"OAuth password for HTTP BasicAuth to access the endpoint" default:"pass"`
+	Dev       bool   `short:"d" long:"dev" description:"Developer mode"`
 }
 
 type Credentials struct {
@@ -114,46 +117,58 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "ERR-refresh-01, cookie not found: %v", err)
 		return
 	}
+	accessToken, refreshToken, expiresAt, err := refresh0(c.Value)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, "ERR-refresh %v", err)
+		return
+	}
+	w.Header().Set("Token", accessToken)
+
+	cookie := http.Cookie{
+		Name:     "refresh",
+		Value:    refreshToken,
+		Path:     "/refresh",
+		HttpOnly: true,
+		Secure:   !options.Dev,
+		Expires:  time.Unix(expiresAt, 0),
+	}
+	w.Header().Set("Set-Cookie", cookie.String())
+	w.WriteHeader(http.StatusOK)
+}
+func refresh0(token string) (string, string, int64, error) {
 	refreshClaims := &RefreshClaims{}
 
-	refreshToken, err := jwt.ParseWithClaims(c.Value, refreshClaims, func(token *jwt.Token) (i interface{}, err error) {
+	refreshToken, err := jwt.ParseWithClaims(token, refreshClaims, func(token *jwt.Token) (i interface{}, err error) {
 		return jwtKey, nil
 	})
 
 	if err != nil || !refreshToken.Valid {
-		writeErr(w, http.StatusForbidden, "ERR-refresh-02, could not parse token %v", err)
-		return
+		return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse token %v", err)
 	}
 
 	result, err := dbSelect(refreshClaims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-refresh-03, DB select, %v err %v", refreshClaims.Subject, err)
-		return
+		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", refreshClaims.Subject, err)
 	}
 
 	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		writeErr(w, http.StatusUnauthorized, "ERR-refresh-04, user %v no email verified: %v", refreshClaims.Subject, err)
-		return
+		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", refreshClaims.Subject, err)
 	}
 
 	if result.refreshToken == nil || refreshClaims.Token != *result.refreshToken {
-		writeErr(w, http.StatusForbidden, "ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
-		return
+		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
 	}
 
-	err = setAccessToken(w, string(result.role), result.id, refreshClaims.Subject)
+	accessTokenString, err := setAccessToken(string(result.role), result.id, refreshClaims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-refresh-06, cannot set access token for %v, %v", refreshClaims.Subject, err)
-		return
+		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", refreshClaims.Subject, err)
 	}
 
-	err = setRefreshToken(w, refreshClaims.Subject, *result.refreshToken)
+	refreshTokenString, expiresAt, err := setRefreshToken(refreshClaims.Subject, *result.refreshToken)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-refresh-07, cannot set refresh token for %v, %v", refreshClaims.Subject, err)
-		return
+		return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot set refresh token for %v, %v", refreshClaims.Subject, err)
 	}
-
-	w.WriteHeader(http.StatusOK)
+	return accessTokenString, refreshTokenString, expiresAt, nil
 }
 
 func confirmEmail(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +245,37 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func checkEmailPassword(email string, password string) (*dbRes, error) {
+	err := validateEmail(email)
+	if err != nil {
+		return nil, fmt.Errorf("ERR-login-02, email is wrong %v", err)
+	}
+
+	result, err := dbSelect(email)
+	if err != nil {
+		return nil, fmt.Errorf("ERR-login-03, DB select, %v err %v", email, err)
+	}
+
+	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
+		return nil, fmt.Errorf("ERR-login-04, user %v no email verified: %v", email, err)
+	}
+
+	dk, err := scrypt.Key([]byte(password), result.salt, 16384, 8, 1, 32)
+	if err != nil {
+		return nil, fmt.Errorf("ERR-login-05, key %v error: %v", email, err)
+	}
+
+	if bytes.Compare(dk, result.password) != 0 {
+		return nil, fmt.Errorf("ERR-login-06, user %v password mismatch", email)
+	}
+	return result, nil
+}
+
 func login(w http.ResponseWriter, r *http.Request) {
+	login0(w, r)
+}
+
+func login0(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
@@ -238,31 +283,9 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = validateEmail(cred.Email)
+	result, err := checkEmailPassword(cred.Email, cred.Password)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-login-02, email is wrong %v", err)
-		return
-	}
-
-	result, err := dbSelect(cred.Email)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-login-03, DB select, %v err %v", cred.Email, err)
-		return
-	}
-
-	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		writeErr(w, http.StatusUnauthorized, "ERR-login-04, user %v no email verified: %v", cred.Email, err)
-		return
-	}
-
-	dk, err := scrypt.Key([]byte(cred.Password), result.salt, 16384, 8, 1, 32)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-login-05, key %v error: %v", cred.Email, err)
-		return
-	}
-
-	if bytes.Compare(dk, result.password) != 0 {
-		writeErr(w, http.StatusForbidden, "ERR-login-06, user %v password mismatch", cred.Email)
+		writeErr(w, http.StatusBadRequest, "ERR-login-02 %v", err)
 		return
 	}
 
@@ -296,16 +319,28 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = setAccessToken(w, string(result.role), result.id, cred.Email)
+	accessToken, err := setAccessToken(string(result.role), result.id, cred.Email)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "ERR-login-11, cannot set access token for %v, %v", cred.Email, err)
 		return
 	}
-	err = setRefreshToken(w, cred.Email, *result.refreshToken)
+	refreshToken, expiresAt, err := setRefreshToken(cred.Email, *result.refreshToken)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "ERR-login-12, cannot set refresh token for %v, %v", cred.Email, err)
 		return
 	}
+
+	w.Header().Set("Token", accessToken)
+
+	cookie := http.Cookie{
+		Name:     "refresh",
+		Value:    refreshToken,
+		Path:     "/refresh",
+		HttpOnly: true,
+		Secure:   !options.Dev,
+		Expires:  time.Unix(expiresAt, 0),
+	}
+	w.Header().Set("Set-Cookie", cookie.String())
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -547,6 +582,94 @@ func readiness(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func oauth(w http.ResponseWriter, r *http.Request) {
+	user, pass, ok := r.BasicAuth()
+	if !ok || user != options.OAuthUser || pass != options.OAuthPass {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	grantType := r.URL.Query().Get("grant_type")
+	grantType, err := url.QueryUnescape(grantType)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if grantType == "refresh_token" {
+		refreshToken := r.URL.Query().Get("refresh_token")
+		refreshToken, err := url.QueryUnescape(refreshToken)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if refreshToken == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		accessToken, refreshToken, expiresAt, err := refresh0(refreshToken)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"access_token":"` + accessToken + `",
+				"token_type":"Bearer",
+				"refresh_token":"` + refreshToken + `",
+				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
+
+	} else if grantType == "password" {
+		email := r.URL.Query().Get("username")
+		email, err := url.QueryUnescape(email)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		password := r.URL.Query().Get("password")
+		password, err = url.QueryUnescape(password)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		scope := r.URL.Query().Get("scope")
+		scope, err = url.QueryUnescape(scope)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if email == "" || password == "" || scope == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		result, err := checkEmailPassword(email, password)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "ERR-login-02 %v", err)
+			return
+		}
+
+		accessToken, err := setAccessToken(string(result.role), result.id, email)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "ERR-login-11, cannot set access token for %v, %v", email, err)
+			return
+		}
+		refreshToken, expiresAt, err := setRefreshToken(email, *result.refreshToken)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "ERR-login-12, cannot set refresh token for %v, %v", email, err)
+			return
+		}
+
+		w.Write([]byte(`{"access_token":"` + accessToken + `",
+				"token_type":"Bearer",
+				"refresh_token":"` + refreshToken + `",
+				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
+
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+}
+
 func liveness(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"version":"` + version + `"}`))
@@ -569,6 +692,10 @@ func main() {
 	<-doneChannel
 }
 
+func loggingMiddleware(next http.Handler) http.Handler {
+	return handlers.CombinedLoggingHandler(os.Stdout, next)
+}
+
 func server(opts *Opts) (*http.Server, <-chan bool) {
 	options = opts
 
@@ -576,9 +703,11 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 	refreshExp = time.Hour * 24 * time.Duration(opts.Refresh)
 
 	router := mux.NewRouter()
+	router.Use(loggingMiddleware)
 	router.HandleFunc("/login", login).Methods("POST")
 	router.HandleFunc("/signup", signup).Methods("POST")
 	router.HandleFunc("/refresh", refresh).Methods("POST")
+	router.HandleFunc("/oauth/token", oauth).Methods("POST")
 	router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 	router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
 	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
@@ -641,9 +770,11 @@ func initDB() (*sql.DB, error) {
 		for _, request := range requests {
 			request = strings.Replace(request, "\n", "", -1)
 			request = strings.Replace(request, "\t", "", -1)
-			_, err = db.Exec(request)
-			if err != nil {
-				return nil, fmt.Errorf("[%v] %v", request, err)
+			if !strings.HasPrefix(request, "#") {
+				_, err = db.Exec(request)
+				if err != nil {
+					return nil, fmt.Errorf("[%v] %v", request, err)
+				}
 			}
 		}
 	}
@@ -667,8 +798,11 @@ func genRnd(n int) ([]byte, error) {
 func writeErr(w http.ResponseWriter, code int, format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
 	log.Printf(msg)
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(code)
-	w.Write([]byte(msg))
+	w.Write([]byte(`{"error":"` + msg + `"}`))
 }
 
 func sendEmail(url string) error {
@@ -725,7 +859,7 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func setAccessToken(w http.ResponseWriter, role string, id []byte, subject string) error {
+func setAccessToken(role string, id []byte, subject string) (string, error) {
 	tokenClaims := &TokenClaims{
 		Role: role,
 		StandardClaims: jwt.StandardClaims{
@@ -738,13 +872,12 @@ func setAccessToken(w http.ResponseWriter, role string, id []byte, subject strin
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS512, tokenClaims)
 	accessTokenString, err := accessToken.SignedString(jwtKey)
 	if err != nil {
-		return fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
+		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
-	w.Header().Set("Token", accessTokenString)
-	return nil
+	return accessTokenString, nil
 }
 
-func setRefreshToken(w http.ResponseWriter, subject string, token string) error {
+func setRefreshToken(subject string, token string) (string, int64, error) {
 	rc := &RefreshClaims{}
 	rc.Subject = subject
 	rc.ExpiresAt = time.Now().Add(refreshExp).Unix()
@@ -752,17 +885,7 @@ func setRefreshToken(w http.ResponseWriter, subject string, token string) error 
 	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS512, rc)
 	rt, err := refreshToken.SignedString(jwtKey)
 	if err != nil {
-		return fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
+		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
 	}
-
-	cookie := http.Cookie{
-		Name:     "refresh",
-		Value:    rt,
-		Path:     "/refresh",
-		HttpOnly: true,
-		Secure:   !options.Dev,
-		Expires:  time.Now().Add(refreshExp),
-	}
-	w.Header().Set("Set-Cookie", cookie.String())
-	return nil
+	return rt, rc.ExpiresAt, nil
 }

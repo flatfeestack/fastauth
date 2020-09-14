@@ -41,7 +41,7 @@ func TestSignupWrongEmail(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
-	assert.Equal(t, 0, strings.Index(bodyString, "ERR-signup-02"))
+	assert.Equal(t, 10, strings.Index(bodyString, "ERR-signup-02"))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -58,7 +58,7 @@ func TestSignupTwice(t *testing.T) {
 	bodyString := string(bodyBytes)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, 0, strings.Index(bodyString, "ERR-signup-06"))
+	assert.Equal(t, 10, strings.Index(bodyString, "ERR-signup-06"))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -75,7 +75,7 @@ func TestSignupWrong(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	log.Println(bodyString)
-	assert.Equal(t, 0, strings.Index(bodyString, "ERR-signup-06"))
+	assert.Equal(t, 10, strings.Index(bodyString, "ERR-signup-06"))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -123,13 +123,13 @@ func TestLoginFalse(t *testing.T) {
 
 	resp = doLogin("tom@test.ch", "testtest2", "")
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-	assert.Equal(t, "ERR-login-06, user tom@test.ch password mismatch", string(bodyBytes))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "{\"error\":\"ERR-login-02 ERR-login-06, user tom@test.ch password mismatch\"}", string(bodyBytes))
 
 	resp = doLogin("tom@test.ch2", "testtest", "")
 	bodyBytes, _ = ioutil.ReadAll(resp.Body)
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	assert.Equal(t, "ERR-login-03, DB select, tom@test.ch2 err sql: no rows in result set", string(bodyBytes))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "{\"error\":\"ERR-login-02 ERR-login-03, DB select, tom@test.ch2 err sql: no rows in result set\"}", string(bodyBytes))
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -191,7 +191,7 @@ func TestResetFailed(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest", "")
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())

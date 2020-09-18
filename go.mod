@@ -7,7 +7,7 @@ require (
 	github.com/dimiro1/banner v1.0.0
 	github.com/gorilla/handlers v1.5.1
 	github.com/gorilla/mux v1.8.0
-	github.com/jessevdk/go-flags v1.4.0
+	github.com/lestrrat-go/jwx v1.0.4
 	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible
 	github.com/stretchr/testify v1.6.1

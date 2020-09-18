@@ -30,15 +30,26 @@ func dbSelect(email string) (*dbRes, error) {
 	return &res, nil
 }
 
-func insertUser(salt []byte, email string, dk []byte, emailToken string) error {
-	stmt, err := db.Prepare("INSERT INTO users (email, password, role, salt, emailToken) VALUES (?, ?, 'USR', ?, ?)")
+func insertUser(salt []byte, email string, dk []byte, emailToken string, refreshToken string) error {
+	stmt, err := db.Prepare("INSERT INTO users (email, password, role, salt, emailToken, refreshToken) VALUES (?, ?, 'USR', ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO users for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(email, dk, salt, emailToken)
+	res, err := stmt.Exec(email, dk, salt, emailToken, refreshToken)
 	return handleErr(res, err, "INSERT INTO users", email)
+}
+
+func resetRefreshToken(email string, refreshToken string) error {
+	stmt, err := db.Prepare("UPDATE users SET refreshToken = ? WHERE email = ?")
+	if err != nil {
+		return fmt.Errorf("prepare UPDATE refreshTokenfor %v statement failed: %v", email, err)
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(email, refreshToken)
+	return handleErr(res, err, "UPDATE refreshToken", email)
 }
 
 func resetPassword(salt []byte, email string, dk []byte, forgetEmailToken string) error {

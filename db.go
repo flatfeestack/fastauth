@@ -7,7 +7,6 @@ import (
 )
 
 type dbRes struct {
-	id            []byte
 	sms           *string
 	password      []byte
 	role          []byte
@@ -22,8 +21,8 @@ type dbRes struct {
 func dbSelect(email string) (*dbRes, error) {
 	var res dbRes
 	err := db.
-		QueryRow("SELECT id, sms, password, role, salt, emailVerified, refreshToken, totp, smsVerified, totpVerified FROM users WHERE email = ?", email).
-		Scan(&res.id, &res.sms, &res.password, &res.role, &res.salt, &res.emailVerified, &res.refreshToken, &res.totp, &res.smsVerified, &res.totpVerified)
+		QueryRow("SELECT sms, password, role, salt, emailVerified, refreshToken, totp, smsVerified, totpVerified FROM users WHERE email = ?", email).
+		Scan(&res.sms, &res.password, &res.role, &res.salt, &res.emailVerified, &res.refreshToken, &res.totp, &res.smsVerified, &res.totpVerified)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +138,6 @@ func updateMailStatus(email string) error {
 
 	res, err := stmt.Exec(email)
 	return handleErr(res, err, "UPDATE users status", email)
-
 }
 
 func handleErr(res sql.Result, err error, info string, email string) error {

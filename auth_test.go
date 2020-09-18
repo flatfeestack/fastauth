@@ -35,7 +35,7 @@ func TestSignup(t *testing.T) {
 }
 
 func TestSignupWrongEmail(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tomtest.ch", "testtest")
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -49,7 +49,7 @@ func TestSignupWrongEmail(t *testing.T) {
 }
 
 func TestSignupTwice(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	resp.Body.Close()
 	resp = doSignup("tom@test.ch", "testtest")
@@ -66,7 +66,7 @@ func TestSignupTwice(t *testing.T) {
 }
 
 func TestSignupWrong(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}"})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	resp = doSignup("tom@test.ch", "testtest")
 
@@ -137,7 +137,7 @@ func TestLoginFalse(t *testing.T) {
 }
 
 func TestRefresh(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
+	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token1 := resp.Header.Get("Token")

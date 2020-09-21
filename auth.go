@@ -235,10 +235,12 @@ func (r *RefreshClaims) Valid() error {
 
 func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != options.OAuthUser || pass != options.OAuthPass {
-			writeErr(w, http.StatusForbidden, "ERR-basic-auth-01, could not check user/pass: %v", user)
-			return
+		if options.OAuthUser != "" || options.OAuthPass != "" {
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != options.OAuthUser || pass != options.OAuthPass {
+				writeErr(w, http.StatusForbidden, "ERR-basic-auth-01, could not check user/pass: %v", user)
+				return
+			}
 		}
 		next(w, r)
 	}

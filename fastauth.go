@@ -926,8 +926,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 }
 
 func addDevUser(username string, password string) {
-	_, err := dbSelect(username)
-	if err == nil {
+	res, err := dbSelect(username)
+	if res == nil || err != nil {
 		salt := []byte{0}
 		dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
 		if err != nil {

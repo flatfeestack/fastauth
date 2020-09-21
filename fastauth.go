@@ -925,6 +925,25 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return handlers.CombinedLoggingHandler(os.Stdout, next)
 }
 
+func addDevUser(username string, password string) {
+	_, err := dbSelect(username)
+	if err == nil {
+		salt := []byte{0}
+		dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = insertUser(salt, username, dk, "emailToken", "refreshToken")
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = updateEmailToken(username, "emailToken")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
 func server(opts *Opts) (*http.Server, <-chan bool) {
 	defaultOpts(opts)
 	options = opts
@@ -965,6 +984,11 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 		log.Fatal(err)
 	}
 
+	if options.Dev != "" {
+		//add user for development
+		addDevUser("tom@test.ch", "test123")
+	}
+
 	s := &http.Server{
 		Addr:         ":" + strconv.Itoa(opts.Port),
 		Handler:      router,
@@ -979,7 +1003,7 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 
 	done := make(chan bool)
 	go func(s *http.Server, ln net.Listener) {
-		log.Printf("Starting auth server on port %v...", s)
+		log.Printf("Starting auth server on port %v...", s.Addr)
 		if err := s.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}

@@ -1,4 +1,4 @@
-module axauth
+module fastauth
 
 go 1.13
 

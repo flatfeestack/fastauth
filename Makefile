@@ -1,7 +1,7 @@
 #Execute the following commands:
 # 'make' and it will create the binary
 # 'make clean' ant it will remove the binary
-NAME:=axauth
+NAME:=fastauth
 
 .PHONY: all build clean dep
 

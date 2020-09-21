@@ -1,4 +1,4 @@
-# AxAuth
+# FastAuth
 
 This is a simple authentication server that can also be used for local development 
 with reasonable defaults to kickstart the local development. This server is meant to 
@@ -17,5 +17,5 @@ make
 To run with reasonable dev settings, execute:
 
 ```
-./axauth -dev myhs256pw
+./fastauth -dev myhs256pw
 ```

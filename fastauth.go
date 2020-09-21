@@ -991,7 +991,7 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 }
 
 func initDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", options.DBPath+"/axauth.db")
+	db, err := sql.Open("sqlite3", options.DBPath+"/fastauth.db")
 	if err != nil {
 		return nil, err
 	}

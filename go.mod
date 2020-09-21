@@ -1,4 +1,4 @@
-module auth
+module axauth
 
 go 1.13
 

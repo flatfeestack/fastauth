@@ -887,7 +887,7 @@ func liveness(w http.ResponseWriter, _ *http.Request) {
 
 func jwkFunc(w http.ResponseWriter, r *http.Request) {
 
-	json := []byte(`{"keys":`)
+	json := []byte(`{"keys":[`)
 	if privRSA != nil {
 		k := jose.JSONWebKey{Key: privRSA.Public()}
 		kid, err := k.Thumbprint(crypto.SHA256)
@@ -910,9 +910,10 @@ func jwkFunc(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "ERR-jwk-2, %v", err)
 			return
 		}
+		json = append(json, []byte(`,`)...)
 		json = append(json, mj...)
 	}
-	json = append(json, []byte(`}`)...)
+	json = append(json, []byte(`]}`)...)
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	w.WriteHeader(http.StatusOK)

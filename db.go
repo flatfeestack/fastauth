@@ -152,6 +152,17 @@ func incErrorCount(email string) error {
 	return handleErr(res, err, "UPDATE users status", email)
 }
 
+func resetCount(email string) error {
+	stmt, err := db.Prepare("UPDATE users set errorCount = 0 WHERE email = ?")
+	if err != nil {
+		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(email)
+	return handleErr(res, err, "UPDATE users status", email)
+}
+
 func handleErr(res sql.Result, err error, info string, email string) error {
 	if err != nil {
 		return fmt.Errorf("%v query %v failed: %v", info, email, err)

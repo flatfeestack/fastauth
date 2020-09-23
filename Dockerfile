@@ -1,5 +1,9 @@
-FROM golang:1.14
+FROM golang:1.14 AS builder
 WORKDIR /app
 COPY . .
 RUN make
-CMD ["./fastauth", "-dev", "test"]
+
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder /app/fastauth .
+CMD ["./fastauth"]

@@ -247,7 +247,7 @@ func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.Resp
 		if options.OAuthUser != "" || options.OAuthPass != "" {
 			user, pass, ok := r.BasicAuth()
 			if !ok || user != options.OAuthUser || pass != options.OAuthPass {
-				writeErr(w, http.StatusForbidden, "ERR-basic-auth-01, could not check user/pass: %v", user)
+				writeErr(w, http.StatusForbidden, false, "ERR-basic-auth-01, could not check user/pass: %v", user)
 				return
 			}
 		}
@@ -264,7 +264,7 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 
 				tok, err := jwt.ParseSigned(bearerToken[1])
 				if err != nil {
-					writeErr(w, http.StatusForbidden, "ERR-auth-01, could not check sig: %v", bearerToken[1])
+					writeErr(w, http.StatusForbidden, false, "ERR-auth-01, could not check sig: %v", bearerToken[1])
 					return
 				}
 
@@ -273,38 +273,38 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 				if tok.Headers[0].Algorithm == string(jose.RS256) {
 					err = tok.Claims(privRSA.Public(), claims)
 					if err != nil {
-						writeErr(w, http.StatusForbidden, "ERR-auth-02, could not parse claims: %v", bearerToken[1])
+						writeErr(w, http.StatusForbidden, false, "ERR-auth-02, could not parse claims: %v", bearerToken[1])
 						return
 					}
 				}
 				if tok.Headers[0].Algorithm == string(jose.HS256) {
 					err = tok.Claims(jwtKey, claims)
 					if err != nil {
-						writeErr(w, http.StatusForbidden, "ERR-auth-03, could not parse claims: %v", bearerToken[1])
+						writeErr(w, http.StatusForbidden, false, "ERR-auth-03, could not parse claims: %v", bearerToken[1])
 						return
 					}
 				}
 				if tok.Headers[0].Algorithm == string(jose.EdDSA) {
 					err = tok.Claims(privEdDSA.Public(), claims)
 					if err != nil {
-						writeErr(w, http.StatusForbidden, "ERR-auth-04, could not parse claims: %v", bearerToken[1])
+						writeErr(w, http.StatusForbidden, false, "ERR-auth-04, could not parse claims: %v", bearerToken[1])
 						return
 					}
 				}
 
 				if !claims.Expiry.Time().After(time.Now()) {
-					writeErr(w, http.StatusForbidden, "ERR-auth-05, expired: %v", bearerToken[1])
+					writeErr(w, http.StatusForbidden, false, "ERR-auth-05, expired: %v", bearerToken[1])
 					return
 				}
 
 				next(w, r, claims)
 				return
 			} else {
-				writeErr(w, http.StatusForbidden, "ERR-auth-06, could not split token: %v", bearerToken[1])
+				writeErr(w, http.StatusForbidden, false, "ERR-auth-06, could not split token: %v", bearerToken[1])
 				return
 			}
 		}
-		writeErr(w, http.StatusBadRequest, "ERR-auth-07, authorization header not set")
+		writeErr(w, http.StatusBadRequest, false, "ERR-auth-07, authorization header not set")
 		return
 	}
 }
@@ -315,12 +315,12 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	//check if refresh token matches
 	c, err := r.Cookie("refresh")
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-refresh-01, cookie not found: %v", err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-refresh-01, cookie not found: %v", err)
 		return
 	}
 	accessToken, refreshToken, expiresAt, err := refresh0(c.Value)
 	if err != nil {
-		writeErr(w, http.StatusForbidden, "ERR-refresh %v", err)
+		writeErr(w, http.StatusForbidden, false, "ERR-refresh %v", err)
 		return
 	}
 	w.Header().Set("Token", accessToken)
@@ -399,7 +399,7 @@ func confirmEmail(w http.ResponseWriter, r *http.Request) {
 
 	err := updateEmailToken(email, token)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-email-01, update email token for %v failed, token %v: %v", email, token, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-email-01, update email token for %v failed, token %v: %v", email, token, err)
 		return
 	}
 
@@ -410,25 +410,25 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-signup-01, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
 	}
 
 	err = validateEmail(cred.Email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-signup-02, email is wrong %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-signup-02, email is wrong %v", err)
 		return
 	}
 
 	err = validatePassword(cred.Password)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-signup-03, password is wrong %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-signup-03, password is wrong %v", err)
 		return
 	}
 
 	rnd, err := genRnd(48)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-signup-04, RND %v err %v", cred.Email, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-signup-04, RND %v err %v", cred.Email, err)
 		return
 	}
 	emailToken := base32.StdEncoding.EncodeToString(rnd[0:16])
@@ -438,7 +438,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	salt := rnd[16:32]
 	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-signup-05, key %v error: %v", cred.Email, err)
+		writeErr(w, http.StatusUnauthorized, false, "ERR-signup-05, key %v error: %v", cred.Email, err)
 		return
 	}
 
@@ -446,7 +446,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 
 	err = insertUser(salt, cred.Email, dk, emailToken, refreshToken)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-signup-06, insert user failed: %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-signup-06, insert user failed: %v", err)
 		return
 	}
 
@@ -456,45 +456,49 @@ func signup(w http.ResponseWriter, r *http.Request) {
 
 	err = sendEmail(url)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-signup-07, send email failed: %v", url)
+		writeErr(w, http.StatusBadRequest, false, "ERR-signup-07, send email failed: %v", url)
 		return
 	}
 
 	err = updateMailStatus(cred.Email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-signup-08, db update failed: %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-signup-08, db update failed: %v", err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func checkEmailPassword(email string, password string) (*dbRes, error) {
+func checkEmailPassword(email string, password string) (*dbRes, bool, error) {
 	result, err := dbSelect(email)
 	if err != nil {
-		return nil, fmt.Errorf("ERR-checkEmail-01, DB select, %v err %v", email, err)
+		return nil, false, fmt.Errorf("ERR-checkEmail-01, DB select, %v err %v", email, err)
 	}
 
 	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		return nil, fmt.Errorf("ERR-checkEmail-02, user %v no email verified: %v", email, err)
+		return nil, false, fmt.Errorf("ERR-checkEmail-02, user %v no email verified: %v", email, err)
 	}
 
 	if *result.errorCount > 2 {
-		return nil, fmt.Errorf("ERR-checkEmail-03, user %v no email verified: %v", email, err)
+		return nil, false, fmt.Errorf("ERR-checkEmail-03, user %v no email verified: %v", email, err)
 	}
 
 	dk, err := scrypt.Key([]byte(password), result.salt, 16384, 8, 1, 32)
 	if err != nil {
-		return nil, fmt.Errorf("ERR-checkEmail-04, key %v error: %v", email, err)
+		return nil, false, fmt.Errorf("ERR-checkEmail-04, key %v error: %v", email, err)
 	}
 
 	if bytes.Compare(dk, result.password) != 0 {
 		err = incErrorCount(email)
 		if err != nil {
-			return nil, fmt.Errorf("ERR-checkEmail-05, key %v error: %v", email, err)
+			return nil, false, fmt.Errorf("ERR-checkEmail-05, key %v error: %v", email, err)
 		}
-		return nil, fmt.Errorf("ERR-checkEmail-06, user %v password mismatch", email)
+		return nil, true, fmt.Errorf("ERR-checkEmail-06, user %v password mismatch", email)
 	}
-	return result, nil
+	err = resetCount(email)
+	if err != nil {
+		return nil, false, fmt.Errorf("ERR-checkEmail-05, key %v error: %v", email, err)
+	}
+	return result, false, nil
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
@@ -505,13 +509,13 @@ func login0(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-login-01, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-login-01, cannot parse JSON credentials %v", err)
 		return
 	}
 
-	result, err := checkEmailPassword(cred.Email, cred.Password)
+	result, retryPossible, err := checkEmailPassword(cred.Email, cred.Password)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-login-02 %v", err)
+		writeErr(w, http.StatusBadRequest, retryPossible, "ERR-login-02 %v", err)
 		return
 	}
 
@@ -524,13 +528,13 @@ func login0(w http.ResponseWriter, r *http.Request) {
 			url = strings.Replace(url, "{token}", token, 1)
 			err = sendSMS(url)
 			if err != nil {
-				writeErr(w, http.StatusUnauthorized, "ERR-login-07, send sms failed %v error: %v", cred.Email, err)
+				writeErr(w, http.StatusUnauthorized, false, "ERR-login-07, send sms failed %v error: %v", cred.Email, err)
 				return
 			}
-			writeErr(w, http.StatusTeapot, "ERR-login-08, waiting for sms verification: %v", cred.Email)
+			writeErr(w, http.StatusTeapot, false, "ERR-login-08, waiting for sms verification: %v", cred.Email)
 			return
 		} else if token != cred.TOTP {
-			writeErr(w, http.StatusForbidden, "ERR-login-09, sms wrong token, %v err %v", cred.Email, err)
+			writeErr(w, http.StatusForbidden, false, "ERR-login-09, sms wrong token, %v err %v", cred.Email, err)
 			return
 		}
 	}
@@ -540,19 +544,19 @@ func login0(w http.ResponseWriter, r *http.Request) {
 		totp := newTOTP(*result.totp)
 		token := totp.Now()
 		if token != cred.TOTP {
-			writeErr(w, http.StatusForbidden, "ERR-login-10, totp wrong token, %v err %v", cred.Email, err)
+			writeErr(w, http.StatusForbidden, false, "ERR-login-10, totp wrong token, %v err %v", cred.Email, err)
 			return
 		}
 	}
 
 	accessToken, err := setAccessToken(string(result.role), cred.Email)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-login-11, cannot set access token for %v, %v", cred.Email, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-login-11, cannot set access token for %v, %v", cred.Email, err)
 		return
 	}
 	refreshToken, expiresAt, err := setRefreshToken(cred.Email, *result.refreshToken)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
 		return
 	}
 
@@ -607,20 +611,20 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
 
 	rnd, err := genRnd(16)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-reset-email-02, RND %v err %v", email, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-reset-email-02, RND %v err %v", email, err)
 		return
 	}
 	forgetEmailToken := base32.StdEncoding.EncodeToString(rnd)
 
 	err = updateEmailForgotToken(email, forgetEmailToken)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-reset-email-03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-reset-email-03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
 		return
 	}
 
@@ -630,7 +634,7 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 
 	err = sendEmail(url)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-reset-email-04, send email failed: %v", url)
+		writeErr(w, http.StatusBadRequest, false, "ERR-reset-email-04, send email failed: %v", url)
 		return
 	}
 
@@ -641,44 +645,44 @@ func confirmReset(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
 
 	token, err := url.QueryUnescape(vars["token"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-reset-email-02, query unescape token %v err: %v", vars["token"], err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-reset-email-02, query unescape token %v err: %v", vars["token"], err)
 		return
 	}
 
 	var cred Credentials
 	err = json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-reset-email-03, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-reset-email-03, cannot parse JSON credentials %v", err)
 		return
 	}
 
 	err = validatePassword(cred.Password)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-reset-email-04, password is wrong %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-reset-email-04, password is wrong %v", err)
 		return
 	}
 
 	salt, err := genRnd(16)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-confirm-reset-email-05, RND %v err %v", email, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-confirm-reset-email-05, RND %v err %v", email, err)
 		return
 	}
 
 	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-confirm-reset-email-06, key %v error: %v", cred.Email, err)
+		writeErr(w, http.StatusUnauthorized, false, "ERR-confirm-reset-email-06, key %v error: %v", cred.Email, err)
 		return
 	}
 
 	err = resetPassword(salt, email, dk, token)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-reset-email-07, update user failed: %v", err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-reset-email-07, update user failed: %v", err)
 		return
 	}
 
@@ -688,14 +692,14 @@ func confirmReset(w http.ResponseWriter, r *http.Request) {
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	rnd, err := genRnd(20)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-setup-totp-01, RND %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-setup-totp-01, RND %v err %v", claims.Subject, err)
 		return
 	}
 
 	secret := base32.StdEncoding.EncodeToString(rnd)
 	err = updateTOTP(claims.Subject, secret)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-setup-totp-02, update failed %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-setup-totp-02, update failed %v err %v", claims.Subject, err)
 		return
 	}
 
@@ -712,24 +716,24 @@ func confirmTOTP(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	token, err := url.QueryUnescape(vars["token"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-totp-01, query unescape token %v err: %v", vars["token"], err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-totp-01, query unescape token %v err: %v", vars["token"], err)
 		return
 	}
 
 	result, err := dbSelect(claims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-confirm-totp-02, DB select, %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusUnauthorized, false, "ERR-confirm-totp-02, DB select, %v err %v", claims.Subject, err)
 		return
 	}
 
 	totp := newTOTP(*result.totp)
 	if token != totp.Now() {
-		writeErr(w, http.StatusUnauthorized, "ERR-confirm-totp-03, token different, %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusUnauthorized, false, "ERR-confirm-totp-03, token different, %v err %v", claims.Subject, err)
 		return
 	}
 	err = updateTOTPVerified(claims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-totp-04, DB select, %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-totp-04, DB select, %v err %v", claims.Subject, err)
 		return
 	}
 
@@ -740,19 +744,19 @@ func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	sms, err := url.QueryUnescape(vars["sms"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-setup-sms-01, query unescape sms %v err: %v", vars["sms"], err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-setup-sms-01, query unescape sms %v err: %v", vars["sms"], err)
 		return
 	}
 
 	rnd, err := genRnd(20)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "ERR-setup-sms-02, RND %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusInternalServerError, false, "ERR-setup-sms-02, RND %v err %v", claims.Subject, err)
 		return
 	}
 	secret := base32.StdEncoding.EncodeToString(rnd)
 	err = updateSMS(claims.Subject, secret, sms)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-setup-sms-03, updateSMS failed %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-setup-sms-03, updateSMS failed %v err %v", claims.Subject, err)
 		return
 	}
 
@@ -763,7 +767,7 @@ func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 
 	err = sendSMS(url)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-setup-sms-04, send SMS failed %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-setup-sms-04, send SMS failed %v err %v", claims.Subject, err)
 		return
 	}
 
@@ -774,24 +778,24 @@ func confirmSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	token, err := url.QueryUnescape(vars["token"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-sms-01, query unescape token %v err: %v", vars["token"], err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-sms-01, query unescape token %v err: %v", vars["token"], err)
 		return
 	}
 
 	result, err := dbSelect(claims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "ERR-confirm-sms-02, DB select, %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusUnauthorized, false, "ERR-confirm-sms-02, DB select, %v err %v", claims.Subject, err)
 		return
 	}
 
 	totp := newTOTP(*result.totp)
 	if token != totp.Now() {
-		writeErr(w, http.StatusUnauthorized, "ERR-confirm-sms-03, token different, %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusUnauthorized, false, "ERR-confirm-sms-03, token different, %v err %v", claims.Subject, err)
 		return
 	}
 	err = updateSMSVerified(claims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-confirm-sms-04, update sms failed, %v err %v", claims.Subject, err)
+		writeErr(w, http.StatusBadRequest, false, "ERR-confirm-sms-04, update sms failed, %v err %v", claims.Subject, err)
 		return
 	}
 
@@ -852,20 +856,20 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		result, err := checkEmailPassword(email, password)
+		result, retryPossible, err := checkEmailPassword(email, password)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "ERR-login-02 %v", err)
+			writeErr(w, http.StatusBadRequest, retryPossible, "ERR-login-02 %v", err)
 			return
 		}
 
 		accessToken, err := setAccessToken(string(result.role), email)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "ERR-login-11, cannot set access token for %v, %v", email, err)
+			writeErr(w, http.StatusInternalServerError, false, "ERR-login-11, cannot set access token for %v, %v", email, err)
 			return
 		}
 		refreshToken, expiresAt, err := setRefreshToken(email, *result.refreshToken)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "ERR-login-12, cannot set refresh token for %v, %v", email, err)
+			writeErr(w, http.StatusInternalServerError, false, "ERR-login-12, cannot set refresh token for %v, %v", email, err)
 			return
 		}
 
@@ -892,13 +896,13 @@ func jwkFunc(w http.ResponseWriter, r *http.Request) {
 		k := jose.JSONWebKey{Key: privRSA.Public()}
 		kid, err := k.Thumbprint(crypto.SHA256)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "ERR-jwk-1, %v", err)
+			writeErr(w, http.StatusInternalServerError, false, "ERR-jwk-1, %v", err)
 			return
 		}
 		k.KeyID = hex.EncodeToString(kid)
 		mj, err := k.MarshalJSON()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "ERR-jwk-2, %v", err)
+			writeErr(w, http.StatusInternalServerError, false, "ERR-jwk-2, %v", err)
 			return
 		}
 		json = append(json, mj...)
@@ -907,7 +911,7 @@ func jwkFunc(w http.ResponseWriter, r *http.Request) {
 		k := jose.JSONWebKey{Key: privEdDSA.Public()}
 		mj, err := k.MarshalJSON()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "ERR-jwk-2, %v", err)
+			writeErr(w, http.StatusInternalServerError, false, "ERR-jwk-2, %v", err)
 			return
 		}
 		json = append(json, []byte(`,`)...)
@@ -1023,7 +1027,7 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 
 	s := &http.Server{
 		Addr:         ":" + strconv.Itoa(opts.Port),
-		Handler:      router,
+		Handler:      limit(router),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
@@ -1088,14 +1092,18 @@ func genRnd(n int) ([]byte, error) {
 	return b, nil
 }
 
-func writeErr(w http.ResponseWriter, code int, format string, a ...interface{}) {
+func writeErr(w http.ResponseWriter, code int, retryPossible bool, format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
 	log.Printf(msg)
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(code)
-	w.Write([]byte(`{"error":"` + msg + `"}`))
+	if retryPossible {
+		w.Write([]byte(`{"error":"invalid_request","error_uri":"https://host:port/error-descriptions/authorization-request/invalid_request/refused"}`))
+	} else {
+		w.Write([]byte(`{"error":"invalid_request","error_uri":"https://host:port/error-descriptions/authorization-request/invalid_request/blocked"}`))
+	}
 }
 
 func sendEmail(url string) error {

@@ -1,5 +1,6 @@
-FROM golang:1.14 AS builder
+FROM golang:1.14-alpine AS builder
 WORKDIR /app
+RUN apk add make gcc musl-dev
 COPY . .
 RUN make
 

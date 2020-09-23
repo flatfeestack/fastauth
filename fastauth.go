@@ -53,21 +53,24 @@ const (
 )
 
 type Opts struct {
-	Dev           string
-	Issuer        string
-	Port          int
-	DBPath        string
-	UrlEmail      string
-	UrlSMS        string
-	Audience      string
-	ExpireAccess  int
-	ExpireRefresh int
-	HS256         string
-	EdDSA         string
-	RS256         string
-	OAuthUser     string
-	OAuthPass     string
-	ResetRefresh  bool
+	Dev            string
+	Issuer         string
+	Port           int
+	DBPath         string
+	UrlEmail       string
+	UrlSMS         string
+	Audience       string
+	ExpireAccess   int
+	ExpireRefresh  int
+	HS256          string
+	EdDSA          string
+	RS256          string
+	OAuthUser      string
+	OAuthPass      string
+	ResetRefresh   bool
+	Users          string
+	UserEndpoints  bool
+	OauthEndpoints bool
 }
 
 func NewOpts() *Opts {
@@ -85,6 +88,9 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.RS256, "rs256", LookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", LookupEnv("EDDSA"), "EdDSA key")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", LookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
+	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
+	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
+	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.Parse()
 	return opts
 }
@@ -120,6 +126,9 @@ func defaultOpts(opts *Opts) {
 
 		opts.OAuthUser = setDefault(opts.OAuthUser, "user")
 		opts.OAuthPass = setDefault(opts.OAuthPass, "pass")
+
+		opts.OauthEndpoints = true
+		opts.UserEndpoints = true
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
 		log.Printf("DEV mode active, rsa is hex(%v)", opts.RS256)
@@ -460,27 +469,30 @@ func signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkEmailPassword(email string, password string) (*dbRes, error) {
-	err := validateEmail(email)
-	if err != nil {
-		return nil, fmt.Errorf("ERR-login-02, email is wrong %v", err)
-	}
-
 	result, err := dbSelect(email)
 	if err != nil {
-		return nil, fmt.Errorf("ERR-login-03, DB select, %v err %v", email, err)
+		return nil, fmt.Errorf("ERR-checkEmail-01, DB select, %v err %v", email, err)
 	}
 
 	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		return nil, fmt.Errorf("ERR-login-04, user %v no email verified: %v", email, err)
+		return nil, fmt.Errorf("ERR-checkEmail-02, user %v no email verified: %v", email, err)
+	}
+
+	if *result.errorCount > 2 {
+		return nil, fmt.Errorf("ERR-checkEmail-03, user %v no email verified: %v", email, err)
 	}
 
 	dk, err := scrypt.Key([]byte(password), result.salt, 16384, 8, 1, 32)
 	if err != nil {
-		return nil, fmt.Errorf("ERR-login-05, key %v error: %v", email, err)
+		return nil, fmt.Errorf("ERR-checkEmail-04, key %v error: %v", email, err)
 	}
 
 	if bytes.Compare(dk, result.password) != 0 {
-		return nil, fmt.Errorf("ERR-login-06, user %v password mismatch", email)
+		err = incErrorCount(email)
+		if err != nil {
+			return nil, fmt.Errorf("ERR-checkEmail-05, key %v error: %v", email, err)
+		}
+		return nil, fmt.Errorf("ERR-checkEmail-06, user %v password mismatch", email)
 	}
 	return result, nil
 }
@@ -925,23 +937,24 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return handlers.CombinedLoggingHandler(os.Stdout, next)
 }
 
-func addDevUser(username string, password string) {
+func addInitialUser(username string, password string) error {
 	res, err := dbSelect(username)
 	if res == nil || err != nil {
 		salt := []byte{0}
 		dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		err = insertUser(salt, username, dk, "emailToken", "refreshToken")
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		err = updateEmailToken(username, "emailToken")
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
+	return nil
 }
 
 func server(opts *Opts) (*http.Server, <-chan bool) {
@@ -953,17 +966,20 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 
 	router := mux.NewRouter()
 	router.Use(loggingMiddleware)
-	router.HandleFunc("/login", login).Methods("POST")
-	router.HandleFunc("/signup", signup).Methods("POST")
-	router.HandleFunc("/refresh", refresh).Methods("POST")
-	router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
-	router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
-	router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
 
-	router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods("POST")
-	router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods("POST")
-	router.HandleFunc("/setup/sms/{sms}", jwtAuth(setupSMS)).Methods("POST")
-	router.HandleFunc("/confirm/sms/{token}", jwtAuth(confirmSMS)).Methods("POST")
+	if opts.UserEndpoints {
+		router.HandleFunc("/login", login).Methods("POST")
+		router.HandleFunc("/signup", signup).Methods("POST")
+		router.HandleFunc("/refresh", refresh).Methods("POST")
+		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
+		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
+		router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
+
+		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods("POST")
+		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods("POST")
+		router.HandleFunc("/setup/sms/{sms}", jwtAuth(setupSMS)).Methods("POST")
+		router.HandleFunc("/confirm/sms/{token}", jwtAuth(confirmSMS)).Methods("POST")
+	}
 
 	//maintenance stuff
 	router.HandleFunc("/readiness", readiness).Methods("GET")
@@ -975,8 +991,10 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("GET")
 	}
 
-	router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods("POST")
-	router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
+	if options.OauthEndpoints {
+		router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods("POST")
+		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
+	}
 
 	var err error
 	db, err = initDB()
@@ -984,9 +1002,22 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 		log.Fatal(err)
 	}
 
-	if options.Dev != "" {
+	if options.Users != "" {
 		//add user for development
-		addDevUser("tom@test.ch", "test123")
+		users := strings.Split(options.Users, ";")
+		for _, user := range users {
+			userpw := strings.Split(user, ":")
+			if len(userpw) == 2 {
+				err = addInitialUser(userpw[0], userpw[1])
+				if err == nil {
+					log.Printf("insterted user %v", userpw[0])
+				} else {
+					log.Printf("could not insert %v", userpw[0])
+				}
+			} else {
+				log.Printf("username and password need to be seperated by ':'")
+			}
+		}
 	}
 
 	s := &http.Server{

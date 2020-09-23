@@ -16,13 +16,14 @@ type dbRes struct {
 	totpVerified  *time.Time
 	refreshToken  *string
 	totp          *string
+	errorCount    *int
 }
 
 func dbSelect(email string) (*dbRes, error) {
 	var res dbRes
 	err := db.
-		QueryRow("SELECT sms, password, role, salt, emailVerified, refreshToken, totp, smsVerified, totpVerified FROM users WHERE email = ?", email).
-		Scan(&res.sms, &res.password, &res.role, &res.salt, &res.emailVerified, &res.refreshToken, &res.totp, &res.smsVerified, &res.totpVerified)
+		QueryRow("SELECT sms, password, role, salt, emailVerified, refreshToken, totp, smsVerified, totpVerified, errorCount FROM users WHERE email = ?", email).
+		Scan(&res.sms, &res.password, &res.role, &res.salt, &res.emailVerified, &res.refreshToken, &res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +132,17 @@ func updateTOTPVerified(email string) error {
 
 func updateMailStatus(email string) error {
 	stmt, err := db.Prepare("UPDATE users set emailSent = CURRENT_TIMESTAMP WHERE email = ?")
+	if err != nil {
+		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(email)
+	return handleErr(res, err, "UPDATE users status", email)
+}
+
+func incErrorCount(email string) error {
+	stmt, err := db.Prepare("UPDATE users set errorCount = errorCount + 1 WHERE email = ?")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)
 	}

@@ -6,5 +6,5 @@ RUN make
 
 FROM alpine:latest
 WORKDIR /app
-COPY --from=builder /app/fastauth .
+COPY --from=builder /app/banner.txt /app/fastauth /app/startup.sql ./
 CMD ["./fastauth"]

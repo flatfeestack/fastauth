@@ -71,6 +71,7 @@ type Opts struct {
 	Users          string
 	UserEndpoints  bool
 	OauthEndpoints bool
+	DetailedError  bool
 }
 
 func NewOpts() *Opts {
@@ -91,6 +92,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
+	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.Parse()
 	return opts
 }
@@ -129,6 +131,7 @@ func defaultOpts(opts *Opts) {
 
 		opts.OauthEndpoints = true
 		opts.UserEndpoints = true
+		opts.DetailedError = true
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
 		log.Printf("DEV mode active, rsa is hex(%v)", opts.RS256)
@@ -1090,10 +1093,15 @@ func writeErr(w http.ResponseWriter, code int, error string, retryPossible bool,
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(code)
-	if retryPossible {
-		w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/invalid_request/refused"}`))
+	if options.DetailedError {
+		msg = `,"error_message":"` + msg + `"`
 	} else {
-		w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/invalid_request/blocked"}`))
+		msg = ""
+	}
+	if retryPossible {
+		w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/invalid_request/refused"` + msg + `}`))
+	} else {
+		w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/invalid_request/blocked"` + msg + `}`))
 	}
 }
 

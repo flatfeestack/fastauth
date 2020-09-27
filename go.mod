@@ -3,7 +3,6 @@ module auth
 go 1.13
 
 require (
-	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/dimiro1/banner v1.0.0
 	github.com/google/go-cmp v0.5.2 // indirect
 	github.com/gorilla/handlers v1.5.1

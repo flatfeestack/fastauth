@@ -1,6 +1,6 @@
-DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS auth;
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS auth (
 	email TEXT PRIMARY KEY,
 	sms TEXT,
 	role TEXT NOT NULL,
@@ -19,4 +19,4 @@ CREATE TABLE IF NOT EXISTS users (
 	forgetEmail TIMESTAMP
 );
 
-#INSERT INTO users (email, sms, role, password, salt, refreshToken, emailToken, forgetEmailToken, totp, lang, created, emailSent, emailVerified, smsVerified, totpVerified, forgetEmail) VALUES ('tom@test.ch', null, 'USR', X'0A139279851C25AACB8E4A8206FC8826B1268C661D0D64750E04ADD13CE4109B', X'7E37E2DC137E985C4F445DE008BF270C', X'608caa5d93cac281a29cbee0d134a724', null, null, null, 'en', '2020-09-14 16:35:15', '2020-09-14 16:35:15', '2020-09-14 16:35:15', null, null, null);
+INSERT INTO auth (email, sms, role, password, salt, refreshToken, emailToken, forgetEmailToken, totp, lang, created, emailSent, emailVerified, smsVerified, totpVerified, forgetEmail) VALUES ('tom@test.ch', null, 'USR', X'0A139279851C25AACB8E4A8206FC8826B1268C661D0D64750E04ADD13CE4109B', X'7E37E2DC137E985C4F445DE008BF270C', X'608caa5d93cac281a29cbee0d134a724', null, null, null, 'en', '2020-09-14 16:35:15', '2020-09-14 16:35:15', '2020-09-14 16:35:15', null, null, null);

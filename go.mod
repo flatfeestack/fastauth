@@ -13,7 +13,7 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/xlzd/gotp v0.0.0-20181030022105-c8557ba2c119
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a
-	golang.org/x/sys v0.0.0-20200918174421-af09f7315aff // indirect
+	golang.org/x/sys v0.0.0-20200926100807-9d91bd62050c // indirect
 	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/square/go-jose.v2 v2.5.1

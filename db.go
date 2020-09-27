@@ -142,25 +142,25 @@ func updateMailStatus(email string) error {
 }
 
 func incErrorCount(email string) error {
-	stmt, err := db.Prepare("UPDATE users set errorCount = errorCount + 1 WHERE email = ?")
+	stmt, err := db.Prepare("UPDATE auth set errorCount = errorCount + 1 WHERE email = ?")
 	if err != nil {
-		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)
+		return fmt.Errorf("prepare UPDATE auth status for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
 	res, err := stmt.Exec(email)
-	return handleErr(res, err, "UPDATE users status", email)
+	return handleErr(res, err, "UPDATE auth status", email)
 }
 
 func resetCount(email string) error {
-	stmt, err := db.Prepare("UPDATE users set errorCount = 0 WHERE email = ?")
+	stmt, err := db.Prepare("UPDATE auth set errorCount = 0 WHERE email = ?")
 	if err != nil {
-		return fmt.Errorf("prepare UPDATE users status for %v statement failed: %v", email, err)
+		return fmt.Errorf("prepare UPDATE auth status for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
 	res, err := stmt.Exec(email)
-	return handleErr(res, err, "UPDATE users status", email)
+	return handleErr(res, err, "UPDATE auth status", email)
 }
 
 func handleErr(res sql.Result, err error, info string, email string) error {

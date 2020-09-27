@@ -41,7 +41,7 @@ func TestSignupWrongEmail(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
-	assert.Equal(t, 10, strings.Index(bodyString, "ERR-signup-02"))
+	assert.True(t, strings.Index(bodyString, "ERR-signup-02") > 0)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -58,7 +58,7 @@ func TestSignupTwice(t *testing.T) {
 	bodyString := string(bodyBytes)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, 10, strings.Index(bodyString, "ERR-signup-06"))
+	assert.True(t, strings.Index(bodyString, "ERR-signup-06") > 0)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -75,7 +75,7 @@ func TestSignupWrong(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	log.Println(bodyString)
-	assert.Equal(t, 10, strings.Index(bodyString, "ERR-signup-06"))
+	assert.True(t, strings.Index(bodyString, "ERR-signup-06") > 0)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())
@@ -124,12 +124,12 @@ func TestLoginFalse(t *testing.T) {
 	resp = doLogin("tom@test.ch", "testtest2", "")
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, "{\"error\":\"ERR-login-02 ERR-login-06, user tom@test.ch password mismatch\"}", string(bodyBytes))
+	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-06, user tom@test.ch password mismatch") > 0)
 
 	resp = doLogin("tom@test.ch2", "testtest", "")
 	bodyBytes, _ = ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, "{\"error\":\"ERR-login-02 ERR-login-03, DB select, tom@test.ch2 err sql: no rows in result set\"}", string(bodyBytes))
+	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-01, DB select, tom@test.ch2 err sql: no rows in result set") > 0)
 
 	defer resp.Body.Close()
 	s.Shutdown(context.Background())

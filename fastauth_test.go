@@ -334,7 +334,7 @@ func token(email string) string {
 
 func getEmailToken(email string) (string, error) {
 	var emailToken string
-	err := db.QueryRow("SELECT emailToken from users where email = ?", email).Scan(&emailToken)
+	err := db.QueryRow("SELECT emailToken from auth where email = ?", email).Scan(&emailToken)
 	if err != nil {
 		return "", err
 	}
@@ -343,7 +343,7 @@ func getEmailToken(email string) (string, error) {
 
 func getForgotEmailToken(email string) (string, error) {
 	var forgetEmailToken string
-	err := db.QueryRow("SELECT forgetEmailToken from users where email = ?", email).Scan(&forgetEmailToken)
+	err := db.QueryRow("SELECT forgetEmailToken from auth where email = ?", email).Scan(&forgetEmailToken)
 	if err != nil {
 		return "", err
 	}

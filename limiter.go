@@ -33,9 +33,9 @@ func getVisitor(ip string) *rate.Limiter {
 
 	v, exists := visitors[ip]
 	if !exists {
-		//10 requests per second with a burst of 10 requests
+		//10 requests per second with a burst of 20 requests
 		//https://stackoverflow.com/questions/54900121/rate-limit-function-40-second-with-golang-org-x-time-rate
-		limiter := rate.NewLimiter(rate.Every(100*time.Millisecond), 10)
+		limiter := rate.NewLimiter(rate.Every(100*time.Millisecond), 20)
 		// Include the current time when creating a new visitor.
 		visitors[ip] = &visitor{limiter, time.Now()}
 		return limiter

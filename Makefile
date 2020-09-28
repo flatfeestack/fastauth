@@ -3,9 +3,11 @@
 # 'make clean' ant it will remove the binary
 NAME:=fastauth
 
-.PHONY: all build clean dep
+.PHONY: all test build clean dep
 
-all: dep build
+all: dep build test
+test:
+	go test ./... -v
 build:
 	go build -v ./...
 dep: go.mod

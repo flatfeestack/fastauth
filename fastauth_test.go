@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
@@ -24,18 +23,17 @@ const (
 curl -v "http://localhost:8080/signup"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
 */
 func TestSignup(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestSignupWrongEmail(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tomtest.ch", "testtest")
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -43,13 +41,12 @@ func TestSignupWrongEmail(t *testing.T) {
 	bodyString := string(bodyBytes)
 	assert.True(t, strings.Index(bodyString, "ERR-signup-02") > 0)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestSignupTwice(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	resp.Body.Close()
 	resp = doSignup("tom@test.ch", "testtest")
@@ -60,13 +57,12 @@ func TestSignupTwice(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.True(t, strings.Index(bodyString, "ERR-signup-06") > 0)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestSignupWrong(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	resp = doSignup("tom@test.ch", "testtest")
 
@@ -77,13 +73,12 @@ func TestSignupWrong(t *testing.T) {
 	log.Println(bodyString)
 	assert.True(t, strings.Index(bodyString, "ERR-signup-06") > 0)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestConfirm(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -91,13 +86,12 @@ func TestConfirm(t *testing.T) {
 	resp = doConfirm("tom@test.ch", token)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestLogin(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -108,13 +102,12 @@ func TestLogin(t *testing.T) {
 	resp = doLogin("tom@test.ch", "testtest", "")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestLoginFalse(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -131,13 +124,12 @@ func TestLoginFalse(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-01, DB select, tom@test.ch2 err sql: no rows in result set") > 0)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestRefresh(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token1 := resp.Header.Get("Token")
@@ -149,13 +141,12 @@ func TestRefresh(t *testing.T) {
 	token2 := resp.Header.Get("Token")
 	assert.NotEqual(t, token1, token2)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestReset(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -171,13 +162,12 @@ func TestReset(t *testing.T) {
 	resp = doLogin("tom@test.ch", "testtest2", "")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestResetFailed(t *testing.T) {
-	s, c := server(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
+	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -193,13 +183,12 @@ func TestResetFailed(t *testing.T) {
 	resp = doLogin("tom@test.ch", "testtest", "")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestTOTP(t *testing.T) {
-	s, c := server(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token := resp.Header.Get("Token")
@@ -216,13 +205,12 @@ func TestTOTP(t *testing.T) {
 	resp = doTOTPConfirm(conf, token)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func TestLoginTOTP(t *testing.T) {
-	s, c := server(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token := resp.Header.Get("Token")
@@ -235,9 +223,8 @@ func TestLoginTOTP(t *testing.T) {
 	resp = doLogin("tom@test.ch", "testtest", "")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 
-	defer resp.Body.Close()
-	s.Shutdown(context.Background())
-	<-c
+	resp.Body.Close()
+	shutdown()
 }
 
 func doTOTP(token string) *http.Response {

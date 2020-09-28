@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -17,6 +18,7 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
+	ldap "github.com/vjeantet/ldapserverver"
 	"github.com/xlzd/gotp"
 	ed25519 "golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/scrypt"
@@ -26,13 +28,14 @@ import (
 	"io/ioutil"
 	"log"
 	rnd "math/rand"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -56,6 +59,7 @@ type Opts struct {
 	Dev            string
 	Issuer         string
 	Port           int
+	Ldap           int
 	DBPath         string
 	UrlEmail       string
 	UrlSMS         string
@@ -71,6 +75,7 @@ type Opts struct {
 	Users          string
 	UserEndpoints  bool
 	OauthEndpoints bool
+	LdapServer     bool
 	DetailedError  bool
 }
 
@@ -78,7 +83,8 @@ func NewOpts() *Opts {
 	opts := &Opts{}
 	flag.StringVar(&opts.Dev, "dev", LookupEnv("DEV"), "Dev settings with initial secret")
 	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer")
-	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening port")
+	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening HTTP port")
+	flag.IntVar(&opts.Port, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
 	flag.StringVar(&opts.DBPath, "db-path", LookupEnv("DB_PATH"), "DB path")
 	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.UrlSMS, "sms-url", LookupEnv("SMS_URL"), "SMS service URL")
@@ -92,6 +98,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
+	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.Parse()
 	return opts
@@ -100,6 +107,7 @@ func NewOpts() *Opts {
 func defaultOpts(opts *Opts) {
 
 	opts.Port = setDefaultInt(opts.Port, 8080)
+	opts.Ldap = setDefaultInt(opts.Ldap, 8389)
 	opts.DBPath = setDefault(opts.DBPath, ".")
 	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, 30*60)
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60)
@@ -131,6 +139,7 @@ func defaultOpts(opts *Opts) {
 
 		opts.OauthEndpoints = true
 		opts.UserEndpoints = true
+		opts.LdapServer = true
 		opts.DetailedError = true
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
@@ -496,10 +505,6 @@ func checkEmailPassword(email string, password string) (*dbRes, bool, error) {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
-	login0(w, r)
-}
-
-func login0(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
@@ -928,8 +933,51 @@ func main() {
 	}
 
 	o := NewOpts()
-	_, doneChannel := server(o)
-	<-doneChannel
+	defaultOpts(o)
+	options = o
+
+	db, err = initDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	setupDB()
+	serverRest, doneChannelRest := serverRest()
+	serverLdap, doneChannelLdap := serverLdap()
+
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		serverRest.Shutdown(context.Background())
+		serverLdap.Stop()
+		serverLdap.Listener.Close()
+	}()
+
+	<-doneChannelRest
+	<-doneChannelLdap
+	db.Close()
+}
+
+func mainTest(opts *Opts) func() {
+	defaultOpts(opts)
+	options = opts
+	var err error
+	db, err = initDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	setupDB()
+	serverRest, doneChannelRest := serverRest()
+	serverLdap, doneChannelLdap := serverLdap()
+
+	return func() {
+		serverRest.Shutdown(context.Background())
+		serverLdap.Stop()
+		serverLdap.Listener.Close()
+		<-doneChannelRest
+		<-doneChannelLdap
+		db.Close()
+	}
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
@@ -956,17 +1004,78 @@ func addInitialUser(username string, password string) error {
 	return nil
 }
 
-func server(opts *Opts) (*http.Server, <-chan bool) {
-	defaultOpts(opts)
-	options = opts
+func serverLdap() (*ldap.Server, <-chan bool) {
+	routes := ldap.NewRouteMux()
+	routes.Bind(handleBind)
 
-	tokenExp = time.Second * time.Duration(opts.ExpireAccess)
-	refreshExp = time.Second * time.Duration(opts.ExpireRefresh)
+	server := ldap.NewServer()
+	server.Handle(routes)
+
+	done := make(chan bool)
+	if options.LdapServer {
+		go func(s *ldap.Server) {
+			addr := ":" + strconv.Itoa(options.Ldap)
+			log.Printf("Starting auth server on port %v...", addr)
+			err := s.ListenAndServe(addr)
+			log.Printf("server closed %v", err)
+			done <- true
+		}(server)
+	} else {
+		done <- true
+	}
+
+	return server, done
+}
+
+func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
+	r := m.GetBindRequest()
+
+	_, retryPossible, err := checkEmailPassword(string(r.Name()), string(r.AuthenticationSimple()))
+	if err != nil {
+		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
+		if options.DetailedError {
+			if retryPossible {
+				res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v, please retry", string(r.Name())))
+			} else {
+				res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v", string(r.Name())))
+			}
+		}
+		w.Write(res)
+		return
+	}
+
+	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
+	w.Write(res)
+}
+
+func setupDB() {
+	if options.Users != "" {
+		//add user for development
+		users := strings.Split(options.Users, ";")
+		for _, user := range users {
+			userpw := strings.Split(user, ":")
+			if len(userpw) == 2 {
+				err := addInitialUser(userpw[0], userpw[1])
+				if err == nil {
+					log.Printf("insterted user %v", userpw[0])
+				} else {
+					log.Printf("could not insert %v", userpw[0])
+				}
+			} else {
+				log.Printf("username and password need to be seperated by ':'")
+			}
+		}
+	}
+}
+
+func serverRest() (*http.Server, <-chan bool) {
+	tokenExp = time.Second * time.Duration(options.ExpireAccess)
+	refreshExp = time.Second * time.Duration(options.ExpireRefresh)
 
 	router := mux.NewRouter()
 	router.Use(loggingMiddleware)
 
-	if opts.UserEndpoints {
+	if options.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
 		router.HandleFunc("/signup", signup).Methods("POST")
 		router.HandleFunc("/refresh", refresh).Methods("POST")
@@ -995,52 +1104,23 @@ func server(opts *Opts) (*http.Server, <-chan bool) {
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
 	}
 
-	var err error
-	db, err = initDB()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if options.Users != "" {
-		//add user for development
-		users := strings.Split(options.Users, ";")
-		for _, user := range users {
-			userpw := strings.Split(user, ":")
-			if len(userpw) == 2 {
-				err = addInitialUser(userpw[0], userpw[1])
-				if err == nil {
-					log.Printf("insterted user %v", userpw[0])
-				} else {
-					log.Printf("could not insert %v", userpw[0])
-				}
-			} else {
-				log.Printf("username and password need to be seperated by ':'")
-			}
-		}
-	}
-
 	s := &http.Server{
-		Addr:         ":" + strconv.Itoa(opts.Port),
+		Addr:         ":" + strconv.Itoa(options.Port),
 		Handler:      limit(router),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
-	ln, err := net.Listen("tcp", s.Addr)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	done := make(chan bool)
-	go func(s *http.Server, ln net.Listener) {
+	go func(s *http.Server) {
 		log.Printf("Starting auth server on port %v...", s.Addr)
-		if err := s.Serve(ln); err != nil && err != http.ErrServerClosed {
+		s.ListenAndServe()
+		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 		log.Printf("Shutdown\n")
-		defer db.Close()
 		done <- true
-	}(s, ln)
+	}(s)
 	return s, done
 }
 

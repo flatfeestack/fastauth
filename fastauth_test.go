@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	testDBPath = "/tmp"
+	testDBPath = "/tmp/fa.db"
 	testDomain = "localhost"
 	testUrl    = "http://" + testDomain + ":8081"
 )

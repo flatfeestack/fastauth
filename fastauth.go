@@ -17,6 +17,7 @@ import (
 	"github.com/dimiro1/banner"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserverver"
 	"github.com/xlzd/gotp"
@@ -61,6 +62,7 @@ type Opts struct {
 	Port           int
 	Ldap           int
 	DBPath         string
+	DBDriver       string
 	UrlEmail       string
 	UrlSMS         string
 	Audience       string
@@ -86,6 +88,7 @@ func NewOpts() *Opts {
 	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening HTTP port")
 	flag.IntVar(&opts.Port, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
 	flag.StringVar(&opts.DBPath, "db-path", LookupEnv("DB_PATH"), "DB path")
+	flag.StringVar(&opts.DBDriver, "db-driver", LookupEnv("DB_DRIVER"), "DB driver")
 	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.UrlSMS, "sms-url", LookupEnv("SMS_URL"), "SMS service URL")
 	flag.StringVar(&opts.Audience, "audience", LookupEnv("SMS_URL"), "Audience")
@@ -108,7 +111,8 @@ func defaultOpts(opts *Opts) {
 
 	opts.Port = setDefaultInt(opts.Port, 8080)
 	opts.Ldap = setDefaultInt(opts.Ldap, 8389)
-	opts.DBPath = setDefault(opts.DBPath, ".")
+	opts.DBPath = setDefault(opts.DBPath, "./fastauth.db")
+	opts.DBDriver = "sqlite3"
 	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, 30*60)
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60)
 	opts.ResetRefresh = false
@@ -1052,6 +1056,35 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 }
 
+func initDB() (*sql.DB, error) {
+	db, err := sql.Open(options.DBDriver, options.DBPath)
+	if err != nil {
+		return nil, err
+	}
+
+	//this will create or alter tables
+	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
+	if _, err := os.Stat("startup.sql"); err == nil {
+		file, err := ioutil.ReadFile("startup.sql")
+		if err != nil {
+			return nil, err
+		}
+		requests := strings.Split(string(file), ";")
+		for _, request := range requests {
+			request = strings.Replace(request, "\n", "", -1)
+			request = strings.Replace(request, "\t", "", -1)
+			if !strings.HasPrefix(request, "#") {
+				_, err = db.Exec(request)
+				if err != nil {
+					return nil, fmt.Errorf("[%v] %v", request, err)
+				}
+			}
+		}
+	}
+
+	return db, nil
+}
+
 func setupDB() {
 	if options.Users != "" {
 		//add user for development
@@ -1126,35 +1159,6 @@ func serverRest() (*http.Server, <-chan bool) {
 		done <- true
 	}(s)
 	return s, done
-}
-
-func initDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", options.DBPath+"/fastauth.db")
-	if err != nil {
-		return nil, err
-	}
-
-	//this will create or alter tables
-	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
-	if _, err := os.Stat("startup.sql"); err == nil {
-		file, err := ioutil.ReadFile("startup.sql")
-		if err != nil {
-			return nil, err
-		}
-		requests := strings.Split(string(file), ";")
-		for _, request := range requests {
-			request = strings.Replace(request, "\n", "", -1)
-			request = strings.Replace(request, "\t", "", -1)
-			if !strings.HasPrefix(request, "#") {
-				_, err = db.Exec(request)
-				if err != nil {
-					return nil, fmt.Errorf("[%v] %v", request, err)
-				}
-			}
-		}
-	}
-
-	return db, nil
 }
 
 ////////// Util functions

@@ -950,7 +950,9 @@ func main() {
 		<-c
 		serverRest.Shutdown(context.Background())
 		serverLdap.Stop()
-		serverLdap.Listener.Close()
+		if serverLdap.Listener != nil {
+			serverLdap.Listener.Close()
+		}
 	}()
 
 	<-doneChannelRest
@@ -973,7 +975,9 @@ func mainTest(opts *Opts) func() {
 	return func() {
 		serverRest.Shutdown(context.Background())
 		serverLdap.Stop()
-		serverLdap.Listener.Close()
+		if serverLdap.Listener != nil {
+			serverLdap.Listener.Close()
+		}
 		<-doneChannelRest
 		<-doneChannelLdap
 		db.Close()

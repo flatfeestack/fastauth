@@ -1015,6 +1015,7 @@ func addInitialUser(username string, password string) error {
 func serverLdap() (*ldap.Server, <-chan bool) {
 	routes := ldap.NewRouteMux()
 	routes.Bind(handleBind)
+	routes.Compare(handleCompare)
 
 	server := ldap.NewServer()
 	server.Handle(routes)
@@ -1053,6 +1054,17 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
+	w.Write(res)
+}
+
+func handleCompare(w ldap.ResponseWriter, m *ldap.Message) {
+	r := m.GetCompareRequest()
+	log.Printf("Comparing entry: %s", r.Entry())
+	//attributes values
+	log.Printf(" attribute name to compare : \"%s\"", r.Ava().AttributeDesc())
+	log.Printf(" attribute value expected : \"%s\"", r.Ava().AssertionValue())
+
+	res := ldap.NewCompareResponse(ldap.LDAPResultCompareTrue)
 	w.Write(res)
 }
 

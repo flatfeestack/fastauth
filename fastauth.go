@@ -19,7 +19,7 @@ import (
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
-	ldap "github.com/vjeantet/ldapserverver"
+	ldap "github.com/vjeantet/ldapserver"
 	"github.com/xlzd/gotp"
 	ed25519 "golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/scrypt"
@@ -1016,6 +1016,7 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 	routes := ldap.NewRouteMux()
 	routes.Bind(handleBind)
 	routes.Compare(handleCompare)
+	routes.Search(handleSearch)
 
 	server := ldap.NewServer()
 	server.Handle(routes)
@@ -1066,6 +1067,42 @@ func handleCompare(w ldap.ResponseWriter, m *ldap.Message) {
 
 	res := ldap.NewCompareResponse(ldap.LDAPResultCompareTrue)
 	w.Write(res)
+}
+
+func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
+	r := m.GetSearchRequest()
+	log.Printf("Request BaseDn=%s", r.BaseObject())
+	log.Printf("Request Filter=%s", r.Filter())
+	log.Printf("Request FilterString=%s", r.FilterString())
+	log.Printf("Request Attributes=%s", r.Attributes())
+	log.Printf("Request TimeLimit=%d", r.TimeLimit().Int())
+
+	// Handle Stop Signal (server stop / client disconnected / Abandoned request....)
+	select {
+	case <-m.Done:
+		log.Print("Leaving handleSearch...")
+		return
+	default:
+	}
+
+	e := ldap.NewSearchResultEntry("cn=Valere JEANTET, " + string(r.BaseObject()))
+	e.AddAttribute("mail", "valere.jeantet@gmail.com", "mail@vjeantet.fr")
+	e.AddAttribute("company", "SODADI")
+	e.AddAttribute("department", "DSI/SEC")
+	e.AddAttribute("l", "Ferrieres en brie")
+	e.AddAttribute("mobile", "0612324567")
+	e.AddAttribute("telephoneNumber", "0612324567")
+	e.AddAttribute("cn", "Valère JEANTET")
+	w.Write(e)
+
+	e = ldap.NewSearchResultEntry("cn=Claire Thomas, " + string(r.BaseObject()))
+	e.AddAttribute("mail", "claire.thomas@gmail.com")
+	e.AddAttribute("cn", "Claire THOMAS")
+	w.Write(e)
+
+	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
+	w.Write(res)
+
 }
 
 func initDB() (*sql.DB, error) {

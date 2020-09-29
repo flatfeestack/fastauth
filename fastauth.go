@@ -831,7 +831,6 @@ func param(name string, r *http.Request) string {
 }
 
 func oauth(w http.ResponseWriter, r *http.Request) {
-
 	grantType := param("grant_type", r)
 	if grantType == "refresh_token" {
 		refreshToken := param("refresh_token", r)
@@ -881,6 +880,31 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 				"refresh_token":"` + refreshToken + `",
 				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
 
+	} else {
+		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", false, "ERR-oauth-07, unsupported grant type")
+		return
+	}
+}
+
+func revoke(w http.ResponseWriter, r *http.Request) {
+	tokenHint := param("token_type_hint", r)
+	if tokenHint == "refresh_token" {
+		oldToken := param("token", r)
+		if oldToken == "" {
+			writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", false, "ERR-oauth-07, unsupported grant type")
+			return
+		}
+		rnd, err := genRnd(16)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", false, "ERR-oauth-07, unsupported grant type")
+			return
+		}
+		newToken := base32.StdEncoding.EncodeToString(rnd)
+		err = resetRefreshTokenByToken(oldToken, newToken)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", false, "ERR-oauth-07, unsupported grant type")
+			return
+		}
 	} else {
 		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", false, "ERR-oauth-07, unsupported grant type")
 		return
@@ -1187,7 +1211,9 @@ func serverRest() (*http.Server, <-chan bool) {
 
 	if options.OauthEndpoints {
 		router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods("POST")
+		router.HandleFunc("/oauth/revoke", basicAuth(revoke)).Methods("POST")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
+
 	}
 
 	s := &http.Server{
@@ -1333,7 +1359,10 @@ func setRefreshToken(subject string, token string) (string, int64, error) {
 			return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
 		}
 		token = base32.StdEncoding.EncodeToString(rnd)
-		resetRefreshToken(subject, token)
+		err = resetRefreshTokenByEmail(subject, token)
+		if err != nil {
+			return "", 0, fmt.Errorf("JWT reset refresh token %v failed: %v", subject, err)
+		}
 	}
 
 	rc := &RefreshClaims{}

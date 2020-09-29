@@ -19,3 +19,5 @@ CREATE TABLE IF NOT EXISTS auth (
 	forgetEmail TIMESTAMP,
 	errorCount INT(255) DEFAULT 0
 );
+
+CREATE INDEX refreshTokenIndex ON auth (refreshToken);

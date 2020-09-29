@@ -41,18 +41,7 @@ func insertUser(salt []byte, email string, dk []byte, emailToken string, refresh
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
-func resetRefreshTokenByEmail(email string, refreshToken string) error {
-	stmt, err := db.Prepare("UPDATE auth SET refreshToken = ? WHERE email = ?")
-	if err != nil {
-		return fmt.Errorf("prepare UPDATE refreshTokenfor %v statement failed: %v", email, err)
-	}
-	defer stmt.Close()
-
-	res, err := stmt.Exec(email, refreshToken)
-	return handleErr(res, err, "UPDATE refreshToken", email)
-}
-
-func resetRefreshTokenByToken(oldRefreshToken string, newRefreshToken string) error {
+func updateRefreshToken(oldRefreshToken string, newRefreshToken string) error {
 	stmt, err := db.Prepare("UPDATE auth SET refreshToken = ? WHERE refreshToken = ?")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE refreshTokenfor statement failed: %v", err)

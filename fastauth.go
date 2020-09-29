@@ -344,7 +344,6 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 func refresh0(token string) (string, string, int64, error) {
-
 	tok, err := jwt.ParseSigned(token)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-01, could not check sig %v", err)
@@ -388,15 +387,24 @@ func refresh0(token string) (string, string, int64, error) {
 		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
 	}
 
-	accessTokenString, err := setAccessToken(string(result.role), refreshClaims.Subject)
+	encodedAccessToken, err := encodeAccessToken(string(result.role), refreshClaims.Subject)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", refreshClaims.Subject, err)
 	}
-	refreshTokenString, expiresAt, err := setRefreshToken(refreshClaims.Subject, *result.refreshToken)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot set refresh token for %v, %v", refreshClaims.Subject, err)
+
+	refreshToken := *result.refreshToken
+	if options.ResetRefresh {
+		refreshToken, err = resetRefreshToken(refreshToken)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", refreshClaims.Subject, err)
+		}
 	}
-	return accessTokenString, refreshTokenString, expiresAt, nil
+
+	encodedRefreshToken, expiresAt, err := encodeRefreshToken(refreshClaims.Subject, refreshToken)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", refreshClaims.Subject, err)
+	}
+	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
 }
 
 func confirmEmail(w http.ResponseWriter, r *http.Request) {
@@ -552,22 +560,32 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	accessToken, err := setAccessToken(string(result.role), cred.Email)
+	encodedAccessToken, err := encodeAccessToken(string(result.role), cred.Email)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "invalid_request", false, "ERR-login-11, cannot set access token for %v, %v", cred.Email, err)
 		return
 	}
-	refreshToken, expiresAt, err := setRefreshToken(cred.Email, *result.refreshToken)
+
+	refreshToken := *result.refreshToken
+	if options.ResetRefresh {
+		refreshToken, err = resetRefreshToken(refreshToken)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "invalid_request", false, "ERR-login-12, cannot reset access token for %v, %v", cred.Email, err)
+			return
+		}
+	}
+
+	encodedRefreshToken, expiresAt, err := encodeRefreshToken(cred.Email, refreshToken)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "invalid_request", false, "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
 		return
 	}
 
-	w.Header().Set("Token", accessToken)
+	w.Header().Set("Token", encodedAccessToken)
 
 	cookie := http.Cookie{
 		Name:     "refresh",
-		Value:    refreshToken,
+		Value:    encodedRefreshToken,
 		Path:     "/refresh",
 		HttpOnly: true,
 		Secure:   options.Dev == "",
@@ -864,20 +882,29 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		accessToken, err := setAccessToken(string(result.role), email)
+		encodedAccessToken, err := encodeAccessToken(string(result.role), email)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-05, cannot set access token for %v, %v", email, err)
 			return
 		}
-		refreshToken, expiresAt, err := setRefreshToken(email, *result.refreshToken)
+
+		refreshToken := *result.refreshToken
+		if options.ResetRefresh {
+			refreshToken, err = resetRefreshToken(refreshToken)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-06, cannot reset access token for %v, %v", email, err)
+				return
+			}
+		}
+		encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-06, cannot set refresh token for %v, %v", email, err)
+			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-07, cannot set refresh token for %v, %v", email, err)
 			return
 		}
 
-		w.Write([]byte(`{"access_token":"` + accessToken + `",
+		w.Write([]byte(`{"access_token":"` + encodedAccessToken + `",
 				"token_type":"Bearer",
-				"refresh_token":"` + refreshToken + `",
+				"refresh_token":"` + encodedRefreshToken + `",
 				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
 
 	} else {
@@ -894,13 +921,7 @@ func revoke(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", false, "ERR-oauth-07, unsupported grant type")
 			return
 		}
-		rnd, err := genRnd(16)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", false, "ERR-oauth-07, unsupported grant type")
-			return
-		}
-		newToken := base32.StdEncoding.EncodeToString(rnd)
-		err = resetRefreshTokenByToken(oldToken, newToken)
+		_, err := resetRefreshToken(oldToken)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", false, "ERR-oauth-07, unsupported grant type")
 			return
@@ -1322,7 +1343,7 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func setAccessToken(role string, subject string) (string, error) {
+func encodeAccessToken(role string, subject string) (string, error) {
 	tokenClaims := &TokenClaims{
 		Role: role,
 		Claims: jwt.Claims{
@@ -1351,20 +1372,28 @@ func setAccessToken(role string, subject string) (string, error) {
 	return accessTokenString, nil
 }
 
-func setRefreshToken(subject string, token string) (string, int64, error) {
+/*
+ If the option ResetRefresh is set, then every time this function is called, which is
+ before the createRefreshToken, then the refresh token is renewed and the old one is
+ not valid anymore.
 
-	if options.ResetRefresh {
-		rnd, err := genRnd(16)
-		if err != nil {
-			return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
-		}
-		token = base32.StdEncoding.EncodeToString(rnd)
-		err = resetRefreshTokenByEmail(subject, token)
-		if err != nil {
-			return "", 0, fmt.Errorf("JWT reset refresh token %v failed: %v", subject, err)
-		}
+ This function is also used in case of revoking a token, where a new token is created,
+ but not returned to the user, so the user has to login to get the refresh token
+*/
+func resetRefreshToken(oldToken string) (string, error) {
+	rnd, err := genRnd(16)
+	if err != nil {
+		return "", err
 	}
+	newToken := base32.StdEncoding.EncodeToString(rnd)
+	err = updateRefreshToken(oldToken, newToken)
+	if err != nil {
+		return "", err
+	}
+	return newToken, nil
+}
 
+func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	rc := &RefreshClaims{}
 	rc.Subject = subject
 	rc.ExpiresAt = time.Now().Add(refreshExp).Unix()

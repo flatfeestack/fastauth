@@ -5,7 +5,7 @@ NAME:=fastauth
 
 .PHONY: all test build clean dep
 
-all: dep build test
+all: dep build #test
 test:
 	go test ./... -v
 build:

@@ -1119,10 +1119,10 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	e.AddAttribute("cn", "Valère JEANTET")
 	w.Write(e)
 
-	e = ldap.NewSearchResultEntry("cn=Claire Thomas, " + string(r.BaseObject()))
-	e.AddAttribute("mail", "claire.thomas@gmail.com")
-	e.AddAttribute("cn", "Claire THOMAS")
-	w.Write(e)
+	//e = ldap.NewSearchResultEntry("cn=Claire Thomas, " + string(r.BaseObject()))
+	//e.AddAttribute("mail", "claire.thomas@gmail.com")
+	//e.AddAttribute("cn", "Claire THOMAS")
+	//w.Write(e)
 
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 	w.Write(res)

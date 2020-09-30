@@ -1085,7 +1085,9 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 
-	_, retryPossible, err := checkEmailPassword(string(r.Name()), string(r.AuthenticationSimple()))
+	uid := strings.Split(strings.Split(string(r.Name()), "uid=")[1], ",")[0]
+
+	_, retryPossible, err := checkEmailPassword(uid, string(r.AuthenticationSimple()))
 	if err != nil {
 		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
 		if options.DetailedError {

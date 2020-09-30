@@ -19,3 +19,10 @@ To run with reasonable dev settings, execute:
 ```
 ./fastauth -dev myhs256pw
 ```
+
+# Run with docker
+
+```
+docker build -t fastauth .
+docker run -it --rm fastauth
+```

@@ -9,4 +9,4 @@ FROM alpine:latest
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
 COPY --from=builder /app/banner.txt /app/fastauth /app/startup.sql ./
-CMD ["./fastauth"]
+ENTRYPOINT ["./fastauth"]

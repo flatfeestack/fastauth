@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dimiro1/banner"
+	ldap_client "github.com/go-ldap/ldap/v3"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
@@ -1060,7 +1061,6 @@ func addInitialUser(username string, password string) error {
 func serverLdap() (*ldap.Server, <-chan bool) {
 	routes := ldap.NewRouteMux()
 	routes.Bind(handleBind)
-	routes.Compare(handleCompare)
 	routes.Search(handleSearch)
 
 	server := ldap.NewServer()
@@ -1084,10 +1084,9 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 
 func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
+	cn := getAttrDN(string(r.Name()), "CN")
 
-	uid := strings.Split(strings.Split(string(r.Name()), "uid=")[1], ",")[0]
-
-	_, retryPossible, err := checkEmailPassword(uid, string(r.AuthenticationSimple()))
+	_, retryPossible, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
 	if err != nil {
 		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
 		if options.DetailedError {
@@ -1105,24 +1104,40 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 }
 
-func handleCompare(w ldap.ResponseWriter, m *ldap.Message) {
-	r := m.GetCompareRequest()
-	log.Printf("Comparing entry: %s", r.Entry())
-	//attributes values
-	log.Printf(" attribute name to compare : \"%s\"", r.Ava().AttributeDesc())
-	log.Printf(" attribute value expected : \"%s\"", r.Ava().AssertionValue())
+/*
+ * Parses a distinguished name and returns the CN portion.
+ * Given a non-conforming string (such as an already-extracted CN),
+ * it will be returned as-is.
+ */
+//https://github.com/chrishoffman/vault
+//https://github.com/chrishoffman/vault/blob/master/builtin/credential/ldap/backend.go
+func getAttrDN(dn string, atyp string) string {
+	log.Printf("parsing basedn %v", dn)
+	parsedDN, err := ldap_client.ParseDN(dn)
+	if err != nil || len(parsedDN.RDNs) == 0 {
+		// It was already a CN, return as-is
+		log.Printf("could not parse %v, %v", dn, err)
+		return dn
+	}
 
-	res := ldap.NewCompareResponse(ldap.LDAPResultCompareTrue)
-	w.Write(res)
+	for _, rdn := range parsedDN.RDNs {
+		for _, rdnAttr := range rdn.Attributes {
+			log.Printf("found attr %v", rdnAttr.Type)
+			if rdnAttr.Type == atyp {
+				return rdnAttr.Value
+			}
+		}
+	}
+
+	// Default, return self
+	return dn
 }
 
 func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetSearchRequest()
-	log.Printf("Request BaseDn=%s", r.BaseObject())
-	log.Printf("Request Filter=%s", r.Filter())
-	log.Printf("Request FilterString=%s", r.FilterString())
-	log.Printf("Request Attributes=%s", r.Attributes())
-	log.Printf("Request TimeLimit=%d", r.TimeLimit().Int())
+
+	log.Printf("Request BaseDn=%s, Request Filter=%s, Request FilterString=%s, Request Attributes=%s, Request TimeLimit=%d",
+		r.BaseObject(), r.Filter(), r.FilterString(), r.Attributes(), r.TimeLimit().Int())
 
 	// Handle Stop Signal (server stop / client disconnected / Abandoned request....)
 	select {
@@ -1132,24 +1147,16 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
-	e := ldap.NewSearchResultEntry("cn=Valere JEANTET, " + string(r.BaseObject()))
-	e.AddAttribute("mail", "valere.jeantet@gmail.com", "mail@vjeantet.fr")
-	e.AddAttribute("company", "SODADI")
-	e.AddAttribute("department", "DSI/SEC")
-	e.AddAttribute("l", "Ferrieres en brie")
-	e.AddAttribute("mobile", "0612324567")
-	e.AddAttribute("telephoneNumber", "0612324567")
-	e.AddAttribute("cn", "Valère JEANTET")
+	cn := getAttrDN(string(r.FilterString()), "CN")
+	_, err := dbSelect(cn)
+	if err != nil {
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
+		w.Write(res)
+	}
+	e := ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
 	w.Write(e)
-
-	e = ldap.NewSearchResultEntry("cn=Claire Thomas, " + string(r.BaseObject()))
-	e.AddAttribute("mail", "claire.thomas@gmail.com")
-	e.AddAttribute("cn", "Claire THOMAS")
-	w.Write(e)
-
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
-
 }
 
 func initDB() (*sql.DB, error) {

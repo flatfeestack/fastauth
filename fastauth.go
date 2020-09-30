@@ -974,66 +974,6 @@ func jwkFunc(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func main() {
-	f, err := os.Open("banner.txt")
-	if err == nil {
-		banner.Init(os.Stdout, true, false, f)
-	} else {
-		log.Printf("could not display banner...")
-	}
-
-	o := NewOpts()
-	defaultOpts(o)
-	options = o
-
-	db, err = initDB()
-	if err != nil {
-		log.Fatal(err)
-	}
-	setupDB()
-	serverRest, doneChannelRest := serverRest()
-	serverLdap, doneChannelLdap := serverLdap()
-
-	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		serverRest.Shutdown(context.Background())
-		serverLdap.Stop()
-		if serverLdap.Listener != nil {
-			serverLdap.Listener.Close()
-		}
-	}()
-
-	<-doneChannelRest
-	<-doneChannelLdap
-	db.Close()
-}
-
-func mainTest(opts *Opts) func() {
-	defaultOpts(opts)
-	options = opts
-	var err error
-	db, err = initDB()
-	if err != nil {
-		log.Fatal(err)
-	}
-	setupDB()
-	serverRest, doneChannelRest := serverRest()
-	serverLdap, doneChannelLdap := serverLdap()
-
-	return func() {
-		serverRest.Shutdown(context.Background())
-		serverLdap.Stop()
-		if serverLdap.Listener != nil {
-			serverLdap.Listener.Close()
-		}
-		<-doneChannelRest
-		<-doneChannelLdap
-		db.Close()
-	}
-}
-
 func loggingMiddleware(next http.Handler) http.Handler {
 	return handlers.CombinedLoggingHandler(os.Stdout, next)
 }
@@ -1427,4 +1367,64 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	}
 	fmt.Printf("[%s]", refreshToken)
 	return refreshToken, rc.ExpiresAt, nil
+}
+
+func main() {
+	f, err := os.Open("banner.txt")
+	if err == nil {
+		banner.Init(os.Stdout, true, false, f)
+	} else {
+		log.Printf("could not display banner...")
+	}
+
+	o := NewOpts()
+	defaultOpts(o)
+	options = o
+
+	db, err = initDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	setupDB()
+	serverRest, doneChannelRest := serverRest()
+	serverLdap, doneChannelLdap := serverLdap()
+
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		serverRest.Shutdown(context.Background())
+		serverLdap.Stop()
+		if serverLdap.Listener != nil {
+			serverLdap.Listener.Close()
+		}
+	}()
+
+	<-doneChannelRest
+	<-doneChannelLdap
+	db.Close()
+}
+
+func mainTest(opts *Opts) func() {
+	defaultOpts(opts)
+	options = opts
+	var err error
+	db, err = initDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	setupDB()
+	serverRest, doneChannelRest := serverRest()
+	serverLdap, doneChannelLdap := serverLdap()
+
+	return func() {
+		serverRest.Shutdown(context.Background())
+		serverLdap.Stop()
+		if serverLdap.Listener != nil {
+			serverLdap.Listener.Close()
+		}
+		<-doneChannelRest
+		<-doneChannelLdap
+		db.Close()
+	}
 }

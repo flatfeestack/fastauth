@@ -87,7 +87,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.Dev, "dev", LookupEnv("DEV"), "Dev settings with initial secret")
 	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer")
 	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening HTTP port")
-	flag.IntVar(&opts.Port, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
+	flag.IntVar(&opts.Ldap, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
 	flag.StringVar(&opts.DBPath, "db-path", LookupEnv("DB_PATH"), "DB path")
 	flag.StringVar(&opts.DBDriver, "db-driver", LookupEnv("DB_DRIVER"), "DB driver")
 	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")

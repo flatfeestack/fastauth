@@ -1404,29 +1404,3 @@ func main() {
 	<-doneChannelLdap
 	db.Close()
 }
-
-func mainTest(opts *Opts) func() {
-	defaultOpts(opts)
-	options = opts
-	var err error
-	db, err = initDB()
-	if err != nil {
-		log.Fatal(err)
-	}
-	setupDB()
-	serverRest, doneChannelRest := serverRest()
-	serverLdap, doneChannelLdap := serverLdap()
-
-	return func() {
-		serverRest.Shutdown(context.Background())
-		serverLdap.Stop()
-		if serverLdap.Listener != nil {
-			serverLdap.Listener.Close()
-		}
-		<-doneChannelRest
-		<-doneChannelLdap
-		db.Close()
-		//for testing, the DB needs to be wiped after each run
-		os.Remove(options.DBPath)
-	}
-}

@@ -1024,7 +1024,7 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 
 func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
-	cn := getAttrDN(string(r.Name()), "CN")
+	cn := getAttrDN(string(r.Name()), "cn")
 
 	_, retryPossible, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
 	if err != nil {
@@ -1087,7 +1087,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
-	cn := getAttrDN(string(r.FilterString()), "CN")
+	cn := getAttrDN(string(r.BaseObject()), "cn")
 	_, err := dbSelect(cn)
 	if err != nil {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)

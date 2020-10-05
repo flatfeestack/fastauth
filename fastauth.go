@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
+	"github.com/lor00x/goldap/message"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserver"
 	"github.com/xlzd/gotp"
@@ -1073,6 +1074,7 @@ func getAttrDN(dn string, atyp string) string {
 	}
 
 	// Default, return self
+	log.Printf("default attr %v", dn)
 	return dn
 }
 
@@ -1090,14 +1092,32 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
-	cn := getAttrDN(string(r.BaseObject()), "cn")
+	var cn string
+	if strings.Index(string(r.BaseObject()), "cn") >= 0 {
+		cn = getAttrDN(string(r.BaseObject()), "cn")
+	} else if strings.Index(r.FilterString(), "cn") >= 0 {
+		cn = getAttrDN(r.FilterString(), "cn")
+	} else {
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
+		w.Write(res)
+		return
+	}
+
 	_, err := dbSelect(cn)
 	if err != nil {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
 		w.Write(res)
+		return
 	}
-	e := ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
-	w.Write(e)
+
+	var e message.SearchResultEntry
+	if strings.Index(string(r.BaseObject()), "cn") >= 0 {
+		e = ldap.NewSearchResultEntry(string(r.BaseObject()))
+		w.Write(e)
+	} else {
+		e = ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
+		w.Write(e)
+	}
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
 }

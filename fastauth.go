@@ -58,28 +58,29 @@ const (
 )
 
 type Opts struct {
-	Dev            string
-	Issuer         string
-	Port           int
-	Ldap           int
-	DBPath         string
-	DBDriver       string
-	UrlEmail       string
-	UrlSMS         string
-	Audience       string
-	ExpireAccess   int
-	ExpireRefresh  int
-	HS256          string
-	EdDSA          string
-	RS256          string
-	OAuthUser      string
-	OAuthPass      string
-	ResetRefresh   bool
-	Users          string
-	UserEndpoints  bool
-	OauthEndpoints bool
-	LdapServer     bool
-	DetailedError  bool
+	Dev               string
+	Issuer            string
+	Port              int
+	Ldap              int
+	DBPath            string
+	DBDriver          string
+	UrlEmail          string
+	UrlSMS            string
+	Audience          string
+	ExpireAccess      int
+	ExpireRefresh     int
+	HS256             string
+	EdDSA             string
+	RS256             string
+	OAuthUser         string
+	OAuthPass         string
+	ResetRefresh      bool
+	RefreshCookiePath string
+	Users             string
+	UserEndpoints     bool
+	OauthEndpoints    bool
+	LdapServer        bool
+	DetailedError     bool
 }
 
 func NewOpts() *Opts {
@@ -99,6 +100,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.RS256, "rs256", LookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", LookupEnv("EDDSA"), "EdDSA key")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", LookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
+	flag.StringVar(&opts.RefreshCookiePath, "refresh-cookie-path", LookupEnv("REFRESH_COOKIE_PATH"), "Refresh cookie path, default is /refresh")
 	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
@@ -117,6 +119,7 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, 30*60)
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60)
 	opts.ResetRefresh = false
+	opts.RefreshCookiePath = "/refresh"
 
 	if opts.Dev != "" {
 		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
@@ -336,7 +339,7 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	cookie := http.Cookie{
 		Name:     "refresh",
 		Value:    refreshToken,
-		Path:     "/refresh",
+		Path:     options.RefreshCookiePath,
 		HttpOnly: true,
 		Secure:   options.Dev == "",
 		Expires:  time.Unix(expiresAt, 0),

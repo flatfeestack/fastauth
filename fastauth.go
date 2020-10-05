@@ -1426,5 +1426,7 @@ func mainTest(opts *Opts) func() {
 		<-doneChannelRest
 		<-doneChannelLdap
 		db.Close()
+		//for testing, the DB needs to be wiped after each run
+		os.Remove(options.DBPath)
 	}
 }

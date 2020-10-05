@@ -31,6 +31,7 @@ import (
 	"io/ioutil"
 	"log"
 	rnd "math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1171,7 +1172,7 @@ func setupDB() {
 	}
 }
 
-func serverRest() (*http.Server, <-chan bool) {
+func serverRest() (*http.Server, <-chan bool, error) {
 	tokenExp = time.Second * time.Duration(options.ExpireAccess)
 	refreshExp = time.Second * time.Duration(options.ExpireRefresh)
 
@@ -1216,17 +1217,21 @@ func serverRest() (*http.Server, <-chan bool) {
 		WriteTimeout: 10 * time.Second,
 	}
 
+	l, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	done := make(chan bool)
-	go func(s *http.Server) {
+	go func(s *http.Server, l net.Listener) {
 		log.Printf("Starting auth server on port %v...", s.Addr)
-		s.ListenAndServe()
-		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.Serve(l); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 		log.Printf("Shutdown\n")
 		done <- true
-	}(s)
-	return s, done
+	}(s, l)
+	return s, done, nil
 }
 
 ////////// Util functions
@@ -1409,7 +1414,10 @@ func main() {
 		log.Fatal(err)
 	}
 	setupDB()
-	serverRest, doneChannelRest := serverRest()
+	serverRest, doneChannelRest, err := serverRest()
+	if err != nil {
+		log.Fatal(err)
+	}
 	serverLdap, doneChannelLdap := serverLdap()
 
 	c := make(chan os.Signal)

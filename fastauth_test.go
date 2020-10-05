@@ -315,9 +315,15 @@ func doSignup(email string, pass string) *http.Response {
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)
 
-	req, _ := http.NewRequest("POST", testUrl+"/signup", body)
+	req, err := http.NewRequest("POST", testUrl+"/signup", body)
+	if err != nil {
+		log.Printf("request failed %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("request failed %v", err)
+	}
 	return resp
 }
 
@@ -361,7 +367,10 @@ func mainTest(opts *Opts) func() {
 		log.Fatal(err)
 	}
 	setupDB()
-	serverRest, doneChannelRest := serverRest()
+	serverRest, doneChannelRest, err := serverRest()
+	if err != nil {
+		log.Fatal(err)
+	}
 	serverLdap, doneChannelLdap := serverLdap()
 
 	return func() {

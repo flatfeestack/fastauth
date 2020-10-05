@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -348,4 +350,36 @@ func getForgotEmailToken(email string) (string, error) {
 		return "", err
 	}
 	return forgetEmailToken, nil
+}
+
+func mainTest(opts *Opts) func() {
+	defaultOpts(opts)
+	options = opts
+	var err error
+	db, err = initDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	setupDB()
+	serverRest, doneChannelRest := serverRest()
+	serverLdap, doneChannelLdap := serverLdap()
+
+	return func() {
+		serverRest.Shutdown(context.Background())
+		serverLdap.Stop()
+		if serverLdap.Listener != nil {
+			serverLdap.Listener.Close()
+		}
+		<-doneChannelRest
+		<-doneChannelLdap
+		err := db.Close()
+		if err != nil {
+			log.Printf("could not close DB %v", err)
+		}
+		//for testing, the DB needs to be wiped after each run
+		err = os.Remove(options.DBPath)
+		if err != nil {
+			log.Printf("could not remove DB file %v", err)
+		}
+	}
 }

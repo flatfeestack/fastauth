@@ -15,11 +15,9 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dimiro1/banner"
-	ldap_client "github.com/go-ldap/ldap/v3"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
-	"github.com/lor00x/goldap/message"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserver"
 	"github.com/xlzd/gotp"
@@ -28,7 +26,6 @@ import (
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"hash/crc64"
-	"io/ioutil"
 	"log"
 	rnd "math/rand"
 	"net"
@@ -53,6 +50,7 @@ var (
 	db           *sql.DB
 	tokenExp     time.Duration
 	refreshExp   time.Duration
+	codeExp      time.Duration
 )
 
 const (
@@ -71,6 +69,7 @@ type Opts struct {
 	Audience          string
 	ExpireAccess      int
 	ExpireRefresh     int
+	ExpireCode        int
 	HS256             string
 	EdDSA             string
 	RS256             string
@@ -98,6 +97,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.Audience, "audience", LookupEnv("SMS_URL"), "Audience")
 	flag.IntVar(&opts.ExpireAccess, "expire-access", LookupEnvInt("EXPIRE_ACCESS"), "Access token expiration in seconds")
 	flag.IntVar(&opts.ExpireRefresh, "expire-refresh", LookupEnvInt("EXPIRE_REFRESH"), "Refresh token expiration in seconds")
+	flag.IntVar(&opts.ExpireCode, "expire-code", LookupEnvInt("EXPIRE_CODE"), "Authtoken flow expiration in seconds")
 	flag.StringVar(&opts.HS256, "hs256", LookupEnv("HS256"), "HS256 key")
 	flag.StringVar(&opts.RS256, "rs256", LookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", LookupEnv("EDDSA"), "EdDSA key")
@@ -118,8 +118,9 @@ func defaultOpts(opts *Opts) {
 	opts.Ldap = setDefaultInt(opts.Ldap, 8389)
 	opts.DBPath = setDefault(opts.DBPath, "./fastauth.db")
 	opts.DBDriver = "sqlite3"
-	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, 30*60)
-	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60)
+	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, 30*60)        //30min
+	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
+	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
 	opts.RefreshCookiePath = "/refresh"
 
@@ -252,6 +253,13 @@ type RefreshClaims struct {
 	Subject   string `json:"role,omitempty"`
 	Token     string `json:"token,omitempty"`
 }
+type CodeClaims struct {
+	ExpiresAt               int64  `json:"exp,omitempty"`
+	Subject                 string `json:"role,omitempty"`
+	CodeChallenge           string `json:"code-challenge,omitempty"`
+	CodeCodeChallengeMethod string `json:"code-challenge-method,omitempty"`
+}
+
 type ProvisioningUri struct {
 	Uri string `json:"uri"`
 }
@@ -262,19 +270,6 @@ func (r *RefreshClaims) Valid() error {
 		return fmt.Errorf("expired by %vs", now-r.ExpiresAt)
 	}
 	return nil
-}
-
-func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if options.OAuthUser != "" || options.OAuthPass != "" {
-			user, pass, ok := r.BasicAuth()
-			if !ok || user != options.OAuthUser || pass != options.OAuthPass {
-				writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-basic-auth-01, could not check user/pass: %v", user)
-				return
-			}
-		}
-		next(w, r)
-	}
 }
 
 func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClaims)) func(http.ResponseWriter, *http.Request) {
@@ -349,35 +344,42 @@ func refresh(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Set-Cookie", cookie.String())
 	w.WriteHeader(http.StatusOK)
 }
-func refresh0(token string) (string, string, int64, error) {
+
+func checkRefreshToken(token string) (*RefreshClaims, error) {
 	tok, err := jwt.ParseSigned(token)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-01, could not check sig %v", err)
+		return nil, fmt.Errorf("ERR-check-refresh-01, could not check sig %v", err)
 	}
-
 	refreshClaims := &RefreshClaims{}
 	if tok.Headers[0].Algorithm == string(jose.RS256) {
-		err = tok.Claims(privRSA.Public(), refreshClaims)
+		err := tok.Claims(privRSA.Public(), refreshClaims)
 		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
+			return nil, fmt.Errorf("ERR-check-refresh-02, could not parse claims %v", err)
 		}
-	}
-	if tok.Headers[0].Algorithm == string(jose.HS256) {
-		err = tok.Claims(jwtKey, refreshClaims)
+	} else if tok.Headers[0].Algorithm == string(jose.HS256) {
+		err := tok.Claims(jwtKey, refreshClaims)
 		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
+			return nil, fmt.Errorf("ERR-check-refresh-03, could not parse claims %v", err)
 		}
-	}
-	if tok.Headers[0].Algorithm == string(jose.EdDSA) {
-		err = tok.Claims(privEdDSA.Public(), refreshClaims)
+	} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
+		err := tok.Claims(privEdDSA.Public(), refreshClaims)
 		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
+			return nil, fmt.Errorf("ERR-check-refresh-04, could not parse claims %v", err)
 		}
+	} else {
+		return nil, fmt.Errorf("ERR-check-refresh-05, could not parse claims, no algo found %v", tok.Headers[0].Algorithm)
 	}
-
 	t := time.Unix(refreshClaims.ExpiresAt, 0)
 	if !t.After(time.Now()) {
-		return "", "", 0, fmt.Errorf("ERR-refresh-03, expired %v", err)
+		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
+	}
+	return refreshClaims, nil
+}
+
+func refresh0(token string) (string, string, int64, error) {
+	refreshClaims, err := checkRefreshToken(token)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
 	}
 
 	result, err := dbSelect(refreshClaims.Subject)
@@ -839,112 +841,12 @@ func readiness(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func param(name string, r *http.Request) string {
-
-	n1 := mux.Vars(r)[name]
-	n2, _ := url.QueryUnescape(r.URL.Query().Get(name))
-	n3 := r.FormValue(name)
-
-	if n1 == "" {
-		if n2 == "" {
-			return n3
-		}
-		return n2
-	}
-	return n1
-}
-
-func oauth(w http.ResponseWriter, r *http.Request) {
-	grantType := param("grant_type", r)
-	if grantType == "refresh_token" {
-		refreshToken := param("refresh_token", r)
-		if refreshToken == "" {
-			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-01, no refresh token")
-			return
-		}
-
-		accessToken, refreshToken, expiresAt, err := refresh0(refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", false, "ERR-oauth-02, cannot verify refresh token %v", err)
-			return
-		}
-		w.Write([]byte(`{"access_token":"` + accessToken + `",
-				"token_type":"Bearer",
-				"refresh_token":"` + refreshToken + `",
-				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
-
-	} else if grantType == "password" {
-		email := param("username", r)
-		password := param("password", r)
-		scope := param("scope", r)
-		if email == "" || password == "" || scope == "" {
-			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-03, username, password, or scope empty")
-			return
-		}
-
-		result, retryPossible, err := checkEmailPassword(email, password)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", retryPossible, "ERR-oauth-04 %v", err)
-			return
-		}
-
-		encodedAccessToken, err := encodeAccessToken(string(result.role), email)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-05, cannot set access token for %v, %v", email, err)
-			return
-		}
-
-		refreshToken := *result.refreshToken
-		if options.ResetRefresh {
-			refreshToken, err = resetRefreshToken(refreshToken)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-06, cannot reset access token for %v, %v", email, err)
-				return
-			}
-		}
-		encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", false, "ERR-oauth-07, cannot set refresh token for %v, %v", email, err)
-			return
-		}
-
-		w.Write([]byte(`{"access_token":"` + encodedAccessToken + `",
-				"token_type":"Bearer",
-				"refresh_token":"` + encodedRefreshToken + `",
-				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
-
-	} else {
-		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", false, "ERR-oauth-07, unsupported grant type")
-		return
-	}
-}
-
-func revoke(w http.ResponseWriter, r *http.Request) {
-	tokenHint := param("token_type_hint", r)
-	if tokenHint == "refresh_token" {
-		oldToken := param("token", r)
-		if oldToken == "" {
-			writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", false, "ERR-oauth-07, unsupported grant type")
-			return
-		}
-		_, err := resetRefreshToken(oldToken)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", false, "ERR-oauth-07, unsupported grant type")
-			return
-		}
-	} else {
-		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", false, "ERR-oauth-07, unsupported grant type")
-		return
-	}
-}
-
 func liveness(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"version":"` + version + `"}`))
 }
 
 func jwkFunc(w http.ResponseWriter, r *http.Request) {
-
 	json := []byte(`{"keys":[`)
 	if privRSA != nil {
 		k := jose.JSONWebKey{Key: privRSA.Public()}
@@ -979,30 +881,6 @@ func jwkFunc(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return handlers.CombinedLoggingHandler(os.Stdout, next)
-}
-
-func addInitialUser(username string, password string) error {
-	res, err := dbSelect(username)
-	if res == nil || err != nil {
-		salt := []byte{0}
-		dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
-		if err != nil {
-			return err
-		}
-		err = insertUser(salt, username, dk, "emailToken", "refreshToken")
-		if err != nil {
-			return err
-		}
-		err = updateEmailToken(username, "emailToken")
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func serverLdap() (*ldap.Server, <-chan bool) {
 	routes := ldap.NewRouteMux()
 	routes.Bind(handleBind)
@@ -1027,157 +905,15 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 	return server, done
 }
 
-func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
-	r := m.GetBindRequest()
-	cn := getAttrDN(string(r.Name()), "cn")
-
-	_, retryPossible, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
-	if err != nil {
-		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
-		if options.DetailedError {
-			if retryPossible {
-				res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v, please retry", string(r.Name())))
-			} else {
-				res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v", string(r.Name())))
-			}
-		}
-		w.Write(res)
-		return
-	}
-
-	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
-	w.Write(res)
-}
-
-/*
- * Parses a distinguished name and returns the CN portion.
- * Given a non-conforming string (such as an already-extracted CN),
- * it will be returned as-is.
- */
-//https://github.com/chrishoffman/vault
-//https://github.com/chrishoffman/vault/blob/master/builtin/credential/ldap/backend.go
-func getAttrDN(dn string, atyp string) string {
-	log.Printf("parsing basedn %v", dn)
-	parsedDN, err := ldap_client.ParseDN(dn)
-	if err != nil || len(parsedDN.RDNs) == 0 {
-		// It was already a CN, return as-is
-		log.Printf("could not parse %v, %v", dn, err)
-		return dn
-	}
-
-	for _, rdn := range parsedDN.RDNs {
-		for _, rdnAttr := range rdn.Attributes {
-			log.Printf("found attr %v", rdnAttr.Type)
-			if rdnAttr.Type == atyp {
-				return rdnAttr.Value
-			}
-		}
-	}
-
-	// Default, return self
-	log.Printf("default attr %v", dn)
-	return dn
-}
-
-func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
-	r := m.GetSearchRequest()
-
-	log.Printf("Request BaseDn=%s, Request Filter=%s, Request FilterString=%s, Request Attributes=%s, Request TimeLimit=%d",
-		r.BaseObject(), r.Filter(), r.FilterString(), r.Attributes(), r.TimeLimit().Int())
-
-	// Handle Stop Signal (server stop / client disconnected / Abandoned request....)
-	select {
-	case <-m.Done:
-		log.Print("Leaving handleSearch...")
-		return
-	default:
-	}
-
-	var cn string
-	if strings.Index(string(r.BaseObject()), "cn") >= 0 {
-		cn = getAttrDN(string(r.BaseObject()), "cn")
-	} else if strings.Index(r.FilterString(), "cn") >= 0 {
-		cn = getAttrDN(r.FilterString(), "cn")
-	} else {
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
-		w.Write(res)
-		return
-	}
-
-	_, err := dbSelect(cn)
-	if err != nil {
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
-		w.Write(res)
-		return
-	}
-
-	var e message.SearchResultEntry
-	if strings.Index(string(r.BaseObject()), "cn") >= 0 {
-		e = ldap.NewSearchResultEntry(string(r.BaseObject()))
-		w.Write(e)
-	} else {
-		e = ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
-		w.Write(e)
-	}
-	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
-	w.Write(res)
-}
-
-func initDB() (*sql.DB, error) {
-	db, err := sql.Open(options.DBDriver, options.DBPath)
-	if err != nil {
-		return nil, err
-	}
-
-	//this will create or alter tables
-	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
-	if _, err := os.Stat("startup.sql"); err == nil {
-		file, err := ioutil.ReadFile("startup.sql")
-		if err != nil {
-			return nil, err
-		}
-		requests := strings.Split(string(file), ";")
-		for _, request := range requests {
-			request = strings.Replace(request, "\n", "", -1)
-			request = strings.Replace(request, "\t", "", -1)
-			if !strings.HasPrefix(request, "#") {
-				_, err = db.Exec(request)
-				if err != nil {
-					return nil, fmt.Errorf("[%v] %v", request, err)
-				}
-			}
-		}
-	}
-
-	return db, nil
-}
-
-func setupDB() {
-	if options.Users != "" {
-		//add user for development
-		users := strings.Split(options.Users, ";")
-		for _, user := range users {
-			userpw := strings.Split(user, ":")
-			if len(userpw) == 2 {
-				err := addInitialUser(userpw[0], userpw[1])
-				if err == nil {
-					log.Printf("insterted user %v", userpw[0])
-				} else {
-					log.Printf("could not insert %v", userpw[0])
-				}
-			} else {
-				log.Printf("username and password need to be seperated by ':'")
-			}
-		}
-	}
-}
-
 func serverRest() (*http.Server, <-chan bool, error) {
 	tokenExp = time.Second * time.Duration(options.ExpireAccess)
 	refreshExp = time.Second * time.Duration(options.ExpireRefresh)
+	codeExp = time.Second * time.Duration(options.ExpireRefresh)
 
 	router := mux.NewRouter()
-	router.Use(loggingMiddleware)
+	router.Use(func(next http.Handler) http.Handler {
+		return handlers.CombinedLoggingHandler(os.Stdout, next)
+	})
 
 	if options.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
@@ -1204,8 +940,9 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	}
 
 	if options.OauthEndpoints {
-		router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods("POST")
-		router.HandleFunc("/oauth/revoke", basicAuth(revoke)).Methods("POST")
+		router.HandleFunc("/oauth/token", oauth).Methods("POST")
+		router.HandleFunc("/oauth/revoke", revoke).Methods("POST")
+		router.HandleFunc("/oauth/authorize", authorize).Methods("POST")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
 
 	}
@@ -1349,27 +1086,6 @@ func encodeAccessToken(role string, subject string) (string, error) {
 	return accessTokenString, nil
 }
 
-/*
- If the option ResetRefresh is set, then every time this function is called, which is
- before the createRefreshToken, then the refresh token is renewed and the old one is
- not valid anymore.
-
- This function is also used in case of revoking a token, where a new token is created,
- but not returned to the user, so the user has to login to get the refresh token
-*/
-func resetRefreshToken(oldToken string) (string, error) {
-	rnd, err := genRnd(16)
-	if err != nil {
-		return "", err
-	}
-	newToken := base32.StdEncoding.EncodeToString(rnd)
-	err = updateRefreshToken(oldToken, newToken)
-	if err != nil {
-		return "", err
-	}
-	return newToken, nil
-}
-
 func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	rc := &RefreshClaims{}
 	rc.Subject = subject
@@ -1395,6 +1111,55 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	}
 	fmt.Printf("[%s]", refreshToken)
 	return refreshToken, rc.ExpiresAt, nil
+}
+
+func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod string) (string, int64, error) {
+	cc := &CodeClaims{}
+	cc.Subject = subject
+	cc.ExpiresAt = time.Now().Add(codeExp).Unix()
+	cc.CodeChallenge = codeChallenge
+	cc.CodeCodeChallengeMethod = codeChallengeMethod
+
+	var sig jose.Signer
+	var err error
+	if options.RS256 != "" {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
+	} else if options.EdDSA != "" {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
+	} else {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+	}
+
+	if err != nil {
+		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
+	}
+	codeToken, err := jwt.Signed(sig).Claims(cc).CompactSerialize()
+	if err != nil {
+		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
+	}
+	fmt.Printf("[%s]", codeToken)
+	return codeToken, cc.ExpiresAt, nil
+}
+
+/*
+ If the option ResetRefresh is set, then every time this function is called, which is
+ before the createRefreshToken, then the refresh token is renewed and the old one is
+ not valid anymore.
+
+ This function is also used in case of revoking a token, where a new token is created,
+ but not returned to the user, so the user has to login to get the refresh token
+*/
+func resetRefreshToken(oldToken string) (string, error) {
+	rnd, err := genRnd(16)
+	if err != nil {
+		return "", err
+	}
+	newToken := base32.StdEncoding.EncodeToString(rnd)
+	err = updateRefreshToken(oldToken, newToken)
+	if err != nil {
+		return "", err
+	}
+	return newToken, nil
 }
 
 func main() {

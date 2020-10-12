@@ -13,15 +13,11 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 	cn := getAttrDN(string(r.Name()), "cn")
 
-	_, retryPossible, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
+	_, errString, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
 	if err != nil {
 		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
 		if options.DetailedError {
-			if retryPossible {
-				res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v, please retry", string(r.Name())))
-			} else {
-				res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v", string(r.Name())))
-			}
+			res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v, %v", string(r.Name()), errString))
 		}
 		w.Write(res)
 		return

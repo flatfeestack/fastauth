@@ -16,16 +16,17 @@ import (
 )
 
 const (
-	testDBPath = "fa.db"
+	testDBPath = "/tmp/fa.db"
 	testDomain = "localhost"
-	testUrl    = "http://" + testDomain + ":8081"
+	testPort   = 8082
+	testUrl    = "http://" + testDomain + ":8082"
 )
 
 /*
 curl -v "http://localhost:8080/signup"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
 */
 func TestSignup(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -35,7 +36,7 @@ func TestSignup(t *testing.T) {
 }
 
 func TestSignupWrongEmail(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tomtest.ch", "testtest")
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -48,7 +49,7 @@ func TestSignupWrongEmail(t *testing.T) {
 }
 
 func TestSignupTwice(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	resp.Body.Close()
 	resp = doSignup("tom@test.ch", "testtest")
@@ -64,7 +65,7 @@ func TestSignupTwice(t *testing.T) {
 }
 
 func TestSignupWrong(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	resp = doSignup("tom@test.ch", "testtest")
 
@@ -80,7 +81,7 @@ func TestSignupWrong(t *testing.T) {
 }
 
 func TestConfirm(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -93,7 +94,7 @@ func TestConfirm(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -109,7 +110,7 @@ func TestLogin(t *testing.T) {
 }
 
 func TestLoginFalse(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -131,7 +132,7 @@ func TestLoginFalse(t *testing.T) {
 }
 
 func TestRefresh(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token1 := resp.Header.Get("Token")
@@ -148,7 +149,7 @@ func TestRefresh(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -169,7 +170,7 @@ func TestReset(t *testing.T) {
 }
 
 func TestResetFailed(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
+	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -190,7 +191,7 @@ func TestResetFailed(t *testing.T) {
 }
 
 func TestTOTP(t *testing.T) {
-	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token := resp.Header.Get("Token")
@@ -212,7 +213,7 @@ func TestTOTP(t *testing.T) {
 }
 
 func TestLoginTOTP(t *testing.T) {
-	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: 8081, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
 	resp := doAll("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	token := resp.Header.Get("Token")

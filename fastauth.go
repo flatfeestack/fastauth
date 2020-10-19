@@ -82,6 +82,7 @@ type Opts struct {
 	OauthEndpoints    bool
 	LdapServer        bool
 	DetailedError     bool
+	Limiter           bool
 }
 
 func NewOpts() *Opts {
@@ -108,6 +109,7 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
+	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
 	flag.Parse()
 	return opts
 }
@@ -152,6 +154,7 @@ func defaultOpts(opts *Opts) {
 		opts.UserEndpoints = true
 		opts.LdapServer = true
 		opts.DetailedError = true
+		opts.Limiter = false
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
 		log.Printf("DEV mode active, rsa is hex(%v)", opts.RS256)

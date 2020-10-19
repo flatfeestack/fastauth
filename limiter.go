@@ -64,6 +64,10 @@ func cleanupVisitors() {
 
 func limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !options.Limiter {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			log.Println(err.Error())

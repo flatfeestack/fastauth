@@ -124,7 +124,7 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
-	opts.RefreshCookiePath = "/refresh"
+	opts.RefreshCookiePath = setDefault(opts.RefreshCookiePath,"/refresh")
 
 	if opts.Dev != "" {
 		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
@@ -597,7 +597,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	cookie := http.Cookie{
 		Name:     "refresh",
 		Value:    encodedRefreshToken,
-		Path:     "/refresh",
+		Path:     options.RefreshCookiePath,
 		HttpOnly: true,
 		Secure:   options.Dev == "",
 		Expires:  time.Unix(expiresAt, 0),

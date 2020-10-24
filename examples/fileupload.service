@@ -1,0 +1,15 @@
+[Unit]
+Description=Fileupload
+
+Wants=network.target
+After=syslog.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fileupload -port 8090 -base /var/www -hs256=FQBPFTILZI5K7CZ2ZUG3DNOZ43LRARIDKCKYAUQL5AKGFVKLSCNQ====
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

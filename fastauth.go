@@ -124,7 +124,7 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
-	opts.RefreshCookiePath = setDefault(opts.RefreshCookiePath,"/refresh")
+	opts.RefreshCookiePath = setDefault(opts.RefreshCookiePath, "/refresh")
 
 	if opts.Dev != "" {
 		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
@@ -296,6 +296,9 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 					err = tok.Claims(jwtKey, claims)
 				} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
 					err = tok.Claims(privEdDSA.Public(), claims)
+				} else {
+					writeErr(w, http.StatusUnauthorized, "invalid_client", "blocked", "ERR-auth-02, unknown algo: %v", bearerToken[1])
+					return
 				}
 
 				if err != nil {
@@ -303,7 +306,7 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 					return
 				}
 
-				if !claims.Expiry.Time().After(time.Now()) {
+				if claims.Expiry != nil && !claims.Expiry.Time().After(time.Now()) {
 					writeErr(w, http.StatusBadRequest, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
 					return
 				}
@@ -311,7 +314,7 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 				next(w, r, claims)
 				return
 			} else {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-auth-04, could not split token: %v", bearerToken[1])
+				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-auth-04, could not split token: %v", bearerToken)
 				return
 			}
 		}

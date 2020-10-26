@@ -9,7 +9,7 @@ all: dep build test
 test:
 	go test ./... -v
 build:
-	go build -v ./...
+	go build -o fastauth
 dep: go.mod
 	go mod tidy
 	go get -v -u ./...

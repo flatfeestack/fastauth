@@ -90,6 +90,9 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, auth challenge failed")
 				return
 			}
+		} else {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, only S256 supported")
+			return
 		}
 
 		result, err := dbSelect(cc.Subject)

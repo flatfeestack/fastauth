@@ -17,6 +17,7 @@ import (
 	"github.com/dimiro1/banner"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/schema"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserver"
@@ -26,6 +27,7 @@ import (
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"hash/crc64"
+	"io/ioutil"
 	"log"
 	rnd "math/rand"
 	"net"
@@ -83,6 +85,7 @@ type Opts struct {
 	LdapServer        bool
 	DetailedError     bool
 	Limiter           bool
+	ClientRedirects   string
 }
 
 func NewOpts() *Opts {
@@ -95,7 +98,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.DBDriver, "db-driver", LookupEnv("DB_DRIVER"), "DB driver")
 	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.UrlSMS, "sms-url", LookupEnv("SMS_URL"), "SMS service URL")
-	flag.StringVar(&opts.Audience, "audience", LookupEnv("SMS_URL"), "Audience")
+	flag.StringVar(&opts.Audience, "audience", LookupEnv("AUDIENCE"), "Audience")
 	flag.IntVar(&opts.ExpireAccess, "expire-access", LookupEnvInt("EXPIRE_ACCESS"), "Access token expiration in seconds")
 	flag.IntVar(&opts.ExpireRefresh, "expire-refresh", LookupEnvInt("EXPIRE_REFRESH"), "Refresh token expiration in seconds")
 	flag.IntVar(&opts.ExpireCode, "expire-code", LookupEnvInt("EXPIRE_CODE"), "Authtoken flow expiration in seconds")
@@ -110,6 +113,7 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
+	flag.StringVar(&opts.ClientRedirects, "cli-redir", LookupEnv("CLI_REDIR"), "add client redirects. E.g, -cli-redir clientId1:http://blabla;clientId2:http://blublu")
 	flag.Parse()
 	return opts
 }
@@ -155,6 +159,10 @@ func defaultOpts(opts *Opts) {
 		opts.LdapServer = true
 		opts.DetailedError = true
 		opts.Limiter = false
+
+		if opts.Users == "" {
+			opts.Users = "tom:123"
+		}
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
 		log.Printf("DEV mode active, rsa is hex(%v)", opts.RS256)
@@ -242,9 +250,20 @@ func LookupEnvInt(key string) int {
 }
 
 type Credentials struct {
-	Email    string `json:"email,omitempty"`
-	Password string `json:"password"`
-	TOTP     string `json:"totp,omitempty"`
+	Email    string `json:"email,omitempty" schema:"email"`
+	Password string `json:"password" schema:"password,required"`
+	TOTP     string `json:"totp,omitempty" schema:"totp"`
+	//here comes oauth, leave empty on regular login
+	//If you want to use oauth, you need to configure
+	//client-id with a matching redirect-uri from the
+	//command line
+	ClientId                string `json:"client_id,omitempty" schema:"client_id"`
+	ResponseType            string `json:"response_type,omitempty" schema:"response_type"`
+	State                   string `json:"state,omitempty" schema:"state"`
+	Scope                   string `json:"scope" schema:"scope"`
+	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
+	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
 }
 
 type TokenClaims struct {
@@ -259,8 +278,8 @@ type RefreshClaims struct {
 type CodeClaims struct {
 	ExpiresAt               int64  `json:"exp,omitempty"`
 	Subject                 string `json:"role,omitempty"`
-	CodeChallenge           string `json:"code-challenge,omitempty"`
-	CodeCodeChallengeMethod string `json:"code-challenge-method,omitempty"`
+	CodeChallenge           string `json:"code_challenge,omitempty"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
 }
 
 type ProvisioningUri struct {
@@ -530,12 +549,33 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 	return result, "", nil
 }
 
+func showLogin(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "login.html")
+}
+
 func login(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
+
+	//https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
+	var bodyCopy []byte
+	if r.Body != nil {
+		bodyCopy, _ = ioutil.ReadAll(r.Body)
+	}
+
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse JSON credentials %v", err)
-		return
+		r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
+		err = r.ParseForm()
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
+			return
+		}
+		err = schema.NewDecoder().Decode(&cred, r.PostForm)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-02, cannot populate POST data %v", err)
+			return
+		}
 	}
 
 	result, errString, err := checkEmailPassword(cred.Email, cred.Password)
@@ -589,24 +629,35 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	encodedRefreshToken, expiresAt, err := encodeRefreshToken(cred.Email, refreshToken)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
-		return
-	}
+	if cred.RedirectUri == "" {
+		encodedRefreshToken, expiresAt, err := encodeRefreshToken(cred.Email, refreshToken)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
+			return
+		}
 
-	w.Header().Set("Token", encodedAccessToken)
+		w.Header().Set("Token", encodedAccessToken)
 
-	cookie := http.Cookie{
-		Name:     "refresh",
-		Value:    encodedRefreshToken,
-		Path:     options.RefreshCookiePath,
-		HttpOnly: true,
-		Secure:   options.Dev == "",
-		Expires:  time.Unix(expiresAt, 0),
+		cookie := http.Cookie{
+			Name:     "refresh",
+			Value:    encodedRefreshToken,
+			Path:     options.RefreshCookiePath,
+			HttpOnly: true,
+			Secure:   options.Dev == "",
+			Expires:  time.Unix(expiresAt, 0),
+		}
+		w.Header().Set("Set-Cookie", cookie.String())
+		w.WriteHeader(http.StatusOK)
+	} else {
+		//return the code flow
+		encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
+			return
+		}
+		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
+		w.WriteHeader(http.StatusMovedPermanently)
 	}
-	w.Header().Set("Set-Cookie", cookie.String())
-	w.WriteHeader(http.StatusOK)
 }
 
 func displayEmail(w http.ResponseWriter, r *http.Request) {
@@ -914,15 +965,16 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 func serverRest() (*http.Server, <-chan bool, error) {
 	tokenExp = time.Second * time.Duration(options.ExpireAccess)
 	refreshExp = time.Second * time.Duration(options.ExpireRefresh)
-	codeExp = time.Second * time.Duration(options.ExpireRefresh)
+	codeExp = time.Second * time.Duration(options.ExpireCode)
 
 	router := mux.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
-		return handlers.CombinedLoggingHandler(os.Stdout, next)
+		return handlers.LoggingHandler(os.Stdout, next)
 	})
 
 	if options.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
+		router.HandleFunc("/login", showLogin).Methods("GET")
 		router.HandleFunc("/signup", signup).Methods("POST")
 		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")

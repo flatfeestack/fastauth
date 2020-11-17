@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset='utf-8'>
+    <title>Login</title>
+    <style>
+        @import url(https://fonts.googleapis.com/css?family=Roboto:300);
+
+        .login-page {
+            width: 50%;
+            padding: 8% 0 0;
+            margin: auto;
+        }
+        .form {
+            position: relative;
+            z-index: 1;
+            background: #FFFFFF;
+            max-width: 50%;
+            margin: 0 auto 100px;
+            padding: 45px;
+            text-align: center;
+            box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.2), 0 5px 5px 0 rgba(0, 0, 0, 0.2);
+        }
+        .form input {
+            font-family: "Roboto", sans-serif;
+            outline: 0;
+            background: #f2f2f2;
+            width: 100%;
+            border: 0;
+            margin: 0 0 15px;
+            padding: 15px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        .form button {
+            font-family: "Roboto", sans-serif;
+            text-transform: uppercase;
+            outline: 0;
+            background: #4CAF50;
+            width: 100%;
+            border: 0;
+            padding: 15px;
+            color: #FFFFFF;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .form button:hover,.form button:active,.form button:focus {
+            background: #43A047;
+        }
+        .form .message {
+            margin: 15px 0 0;
+            color: #b3b3b3;
+            font-size: 12px;
+        }
+        .form .message a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+        .form #register-form {
+            display: none;
+        }
+        body {
+            background: #b0b0b0; /* fallback for old browsers */
+            background: linear-gradient(to left, #b0b0b0, #a0a0a0);
+            font-family: "Roboto", sans-serif;
+        }
+    </style>
+    <script>
+        function changeForm(action) {
+            let reg = document.getElementsByClassName("register-form")[0];
+            let login = document.getElementsByClassName("login-form")[0];
+            if(action === "reg") {
+                login.style.transition = "all 0.3s ease";
+                login.style.display = "block";
+                reg.style.display = "none";
+            } else {
+                login.style.display = "none";
+                reg.style.display = "block";
+            }
+        }
+        function login() {
+            const queryString = window.location.search;
+            const urlParams = new URLSearchParams(queryString);
+            const codeChallenge = urlParams.get('code_challenge');
+            const codeChallengeMethod = urlParams.get('code_challenge_method');
+            const redirectUri = urlParams.get('redirect_uri');
+            const scope = urlParams.get('');
+
+            post({  client_id: 'a17c21ed',
+                    response_type: 'code',
+                    state: '5ca75bd30',
+                    scope: scope,
+                    code_challenge: codeChallenge,
+                    code_challenge_method: codeChallengeMethod,
+                    redirect_uri: redirectUri
+            });
+        }
+
+        function post(params) {
+            const form = document.getElementById('login-form');
+            for (const key in params) {
+                if (params.hasOwnProperty(key)) {
+                    const hiddenField = document.createElement('input');
+                    hiddenField.type = 'hidden';
+                    hiddenField.name = key;
+                    hiddenField.value = params[key];
+                    form.appendChild(hiddenField);
+                }
+            }
+            form.submit();
+        }
+    </script>
+</head>
+<body>
+<div class="login-page">
+    <div class="form">
+        <form id="register-form">
+            <input id="email-reg" type="text" placeholder="email address"/>
+            <input id="password-reg" type="password" placeholder="password"/>
+            <input id="password-reg" type="password" placeholder="password again"/>
+            <button>create</button>
+            <p class="message" id="reg">Already registered? <a href="#" onclick="changeForm('reg')">Sign In</a></p>
+        </form>
+        <form id="login-form" method="post" action="login">
+            <input name="email" id="email" type="text" placeholder="email address"/>
+            <input name="password" id="password" type="password" placeholder="password"/>
+            <button onclick="login()">login</button>
+            <p class="message" id="login">Not registered? <a href="#" onclick="changeForm('login')">Create an account</a></p>
+        </form>
+    </div>
+</div>
+</body>
+</html>

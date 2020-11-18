@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
 	"gopkg.in/square/go-jose.v2"
@@ -12,6 +13,13 @@ import (
 	"strconv"
 	"time"
 )
+
+type OAuth struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
+	Expires      string `json:"expires_in"`
+}
 
 func oauth(w http.ResponseWriter, r *http.Request) {
 	grantType := param("grant_type", r)
@@ -27,43 +35,20 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		accessToken, refreshToken, expiresAt, err := refresh0(refreshToken)
+		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(refreshToken)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
 			return
 		}
-		w.Write([]byte(`{"access_token":"` + accessToken + `",` +
-			`"token_type":"Bearer",` +
-			`"refresh_token":"` + refreshToken + `",` +
-			`"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
 
-	} else if grantType == "password" {
-		err := basic(w, r)
+		oauth := OAuth{AccessToken: encodedAccessToken, TokenType: "Bearer", RefreshToken: encodedRefreshToken, Expires: strconv.FormatInt(expiresAt, 10)}
+		oauthEnc, err := json.Marshal(oauth)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-04, cannot verify refresh token %v", err)
 			return
 		}
-		email := param("username", r)
-		password := param("password", r)
-		scope := param("scope", r)
-		if email == "" || password == "" || scope == "" {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05, username, password, or scope empty")
-			return
-		}
-
-		result, errString, err := checkEmailPassword(email, password)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", errString, "ERR-oauth-06 %v", err)
-			return
-		}
-
-		retVal, err := createBearer(email, result)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-07, cannot set access token for %v, %v", email, err)
-			return
-		}
-
-		w.Write([]byte(retVal))
+		w.Write(oauthEnc)
+		return
 
 	} else if grantType == "authorization_code" {
 		err := basic(w, r)
@@ -101,18 +86,72 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		retVal, err := createBearer(cc.Subject, result)
+		encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, cc.Subject)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-07, cannot set access token for %v, %v", cc.Subject, err)
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-07, cannot verify refresh token %v", err)
 			return
 		}
 
-		w.Write([]byte(retVal))
+		oauth := OAuth{
+			AccessToken:  encodedAccessToken,
+			TokenType:    "Bearer",
+			RefreshToken: encodedRefreshToken,
+			Expires:      strconv.FormatInt(expiresAt, 10),
+		}
+		oauthEnc, err := json.Marshal(oauth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+			return
+		}
+		w.Write(oauthEnc)
+		return
 
 	} else {
-		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
+		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-09, unsupported grant type")
 		return
 	}
+}
+
+func refresh(token string) (string, string, int64, error) {
+	refreshClaims, err := checkRefreshToken(token)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
+	}
+
+	result, err := dbSelect(refreshClaims.Subject)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", refreshClaims.Subject, err)
+	}
+
+	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
+		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", refreshClaims.Subject, err)
+	}
+
+	if result.refreshToken == nil || refreshClaims.Token != *result.refreshToken {
+		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
+	}
+	return encodeTokens(result, refreshClaims.Subject)
+}
+
+func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
+	encodedAccessToken, err := encodeAccessToken(string(result.role), email)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
+	}
+
+	refreshToken := *result.refreshToken
+	if options.ResetRefresh {
+		refreshToken, err = resetRefreshToken(refreshToken)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
+		}
+	}
+
+	encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", email, err)
+	}
+	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
 }
 
 func checkCodeToken(token string) (*CodeClaims, error) {
@@ -144,30 +183,6 @@ func checkCodeToken(token string) (*CodeClaims, error) {
 		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
 	}
 	return codeClaims, nil
-}
-
-func createBearer(email string, result *dbRes) (string, error) {
-	encodedAccessToken, err := encodeAccessToken(string(result.role), email)
-	if err != nil {
-		return "", fmt.Errorf("ERR-oauth-07, cannot set access token for %v, %v", email, err)
-	}
-
-	refreshToken := *result.refreshToken
-	if options.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken)
-		if err != nil {
-			return "", fmt.Errorf("ERR-oauth-08, cannot reset access token for %v, %v", email, err)
-		}
-	}
-	encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
-	if err != nil {
-		return "", fmt.Errorf("ERR-oauth-09, cannot set refresh token for %v, %v", email, err)
-	}
-
-	return `{"access_token":"` + encodedAccessToken + `",` +
-		`"token_type":"Bearer",` +
-		`"refresh_token":"` + encodedRefreshToken + `",` +
-		`"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`, nil
 }
 
 //https://tools.ietf.org/html/rfc6749#section-1.3.1

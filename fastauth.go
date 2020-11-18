@@ -60,32 +60,31 @@ const (
 )
 
 type Opts struct {
-	Dev               string
-	Issuer            string
-	Port              int
-	Ldap              int
-	DBPath            string
-	DBDriver          string
-	UrlEmail          string
-	UrlSMS            string
-	Audience          string
-	ExpireAccess      int
-	ExpireRefresh     int
-	ExpireCode        int
-	HS256             string
-	EdDSA             string
-	RS256             string
-	OAuthUser         string
-	OAuthPass         string
-	ResetRefresh      bool
-	RefreshCookiePath string
-	Users             string
-	UserEndpoints     bool
-	OauthEndpoints    bool
-	LdapServer        bool
-	DetailedError     bool
-	Limiter           bool
-	ClientRedirects   string
+	Dev            string
+	Issuer         string
+	Port           int
+	Ldap           int
+	DBPath         string
+	DBDriver       string
+	UrlEmail       string
+	UrlSMS         string
+	Audience       string
+	ExpireAccess   int
+	ExpireRefresh  int
+	ExpireCode     int
+	HS256          string
+	EdDSA          string
+	RS256          string
+	OAuthUser      string
+	OAuthPass      string
+	ResetRefresh   bool
+	Users          string
+	UserEndpoints  bool
+	OauthEndpoints bool
+	LdapServer     bool
+	DetailedError  bool
+	Limiter        bool
+	Redirects      string
 }
 
 func NewOpts() *Opts {
@@ -106,14 +105,13 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.RS256, "rs256", LookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", LookupEnv("EDDSA"), "EdDSA key")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", LookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
-	flag.StringVar(&opts.RefreshCookiePath, "refresh-cookie-path", LookupEnv("REFRESH_COOKIE_PATH"), "Refresh cookie path, default is /refresh")
 	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
-	flag.StringVar(&opts.ClientRedirects, "cli-redir", LookupEnv("CLI_REDIR"), "add client redirects. E.g, -cli-redir clientId1:http://blabla;clientId2:http://blublu")
+	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
 	flag.Parse()
 	return opts
 }
@@ -128,7 +126,6 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
-	opts.RefreshCookiePath = setDefault(opts.RefreshCookiePath, "/refresh")
 
 	if opts.Dev != "" {
 		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
@@ -150,9 +147,6 @@ func defaultOpts(opts *Opts) {
 			log.Fatalf("cannot generate eddsa key %v", err)
 		}
 		opts.EdDSA = base32.StdEncoding.EncodeToString(edPrivKey)
-
-		opts.OAuthUser = setDefault(opts.OAuthUser, "user")
-		opts.OAuthPass = setDefault(opts.OAuthPass, "pass")
 
 		opts.OauthEndpoints = true
 		opts.UserEndpoints = true
@@ -342,34 +336,6 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 	}
 }
 
-func refresh(w http.ResponseWriter, r *http.Request) {
-	//https://medium.com/monstar-lab-bangladesh-engineering/jwt-auth-in-go-part-2-refresh-tokens-d334777ca8a0
-
-	//check if refresh token matches
-	c, err := r.Cookie("refresh")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-refresh-01, cookie not found: %v", err)
-		return
-	}
-	accessToken, refreshToken, expiresAt, err := refresh0(c.Value)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-refresh-02 %v", err)
-		return
-	}
-	w.Header().Set("Token", accessToken)
-
-	cookie := http.Cookie{
-		Name:     "refresh",
-		Value:    refreshToken,
-		Path:     options.RefreshCookiePath,
-		HttpOnly: true,
-		Secure:   options.Dev == "",
-		Expires:  time.Unix(expiresAt, 0),
-	}
-	w.Header().Set("Set-Cookie", cookie.String())
-	w.WriteHeader(http.StatusOK)
-}
-
 func checkRefreshToken(token string) (*RefreshClaims, error) {
 	tok, err := jwt.ParseSigned(token)
 	if err != nil {
@@ -399,45 +365,6 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
 	}
 	return refreshClaims, nil
-}
-
-func refresh0(token string) (string, string, int64, error) {
-	refreshClaims, err := checkRefreshToken(token)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
-	}
-
-	result, err := dbSelect(refreshClaims.Subject)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", refreshClaims.Subject, err)
-	}
-
-	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", refreshClaims.Subject, err)
-	}
-
-	if result.refreshToken == nil || refreshClaims.Token != *result.refreshToken {
-		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
-	}
-
-	encodedAccessToken, err := encodeAccessToken(string(result.role), refreshClaims.Subject)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", refreshClaims.Subject, err)
-	}
-
-	refreshToken := *result.refreshToken
-	if options.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken)
-		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", refreshClaims.Subject, err)
-		}
-	}
-
-	encodedRefreshToken, expiresAt, err := encodeRefreshToken(refreshClaims.Subject, refreshToken)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", refreshClaims.Subject, err)
-	}
-	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
 }
 
 func confirmEmail(w http.ResponseWriter, r *http.Request) {
@@ -558,12 +485,17 @@ func login(w http.ResponseWriter, r *http.Request) {
 
 	//https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
 	var bodyCopy []byte
+	var err error
 	if r.Body != nil {
-		bodyCopy, _ = ioutil.ReadAll(r.Body)
+		bodyCopy, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
+			return
+		}
 	}
 
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
-	err := json.NewDecoder(r.Body).Decode(&cred)
+	err = json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
 		r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
 		err = r.ParseForm()
@@ -614,50 +546,14 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	encodedAccessToken, err := encodeAccessToken(string(result.role), cred.Email)
+	//return the code flow
+	encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-11, cannot set access token for %v, %v", cred.Email, err)
+		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
 		return
 	}
-
-	refreshToken := *result.refreshToken
-	if options.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-12, cannot reset access token for %v, %v", cred.Email, err)
-			return
-		}
-	}
-
-	if cred.RedirectUri == "" {
-		encodedRefreshToken, expiresAt, err := encodeRefreshToken(cred.Email, refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
-			return
-		}
-
-		w.Header().Set("Token", encodedAccessToken)
-
-		cookie := http.Cookie{
-			Name:     "refresh",
-			Value:    encodedRefreshToken,
-			Path:     options.RefreshCookiePath,
-			HttpOnly: true,
-			Secure:   options.Dev == "",
-			Expires:  time.Unix(expiresAt, 0),
-		}
-		w.Header().Set("Set-Cookie", cookie.String())
-		w.WriteHeader(http.StatusOK)
-	} else {
-		//return the code flow
-		encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
-			return
-		}
-		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
-		w.WriteHeader(http.StatusMovedPermanently)
-	}
+	w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
+	w.WriteHeader(302)
 }
 
 func displayEmail(w http.ResponseWriter, r *http.Request) {
@@ -976,7 +872,6 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/login", login).Methods("POST")
 		router.HandleFunc("/login", showLogin).Methods("GET")
 		router.HandleFunc("/signup", signup).Methods("POST")
-		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
 		router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")

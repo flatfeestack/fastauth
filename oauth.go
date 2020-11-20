@@ -219,8 +219,8 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if responseType == "code" {
 		http.ServeFile(w, r, "login.html")
+		return
 	}
-
 	writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
 }
 

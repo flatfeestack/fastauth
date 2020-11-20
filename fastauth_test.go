@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
 	"io/ioutil"
@@ -381,6 +382,12 @@ func getForgotEmailToken(email string) (string, error) {
 		return "", err
 	}
 	return forgetEmailToken, nil
+}
+
+func TestSecret(t *testing.T) {
+	h := sha256.Sum256([]byte("test"))
+	s := base64.URLEncoding.EncodeToString(h[:])
+	fmt.Printf("[%v]", s)
 }
 
 func mainTest(opts *Opts) func() {

@@ -476,10 +476,6 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 	return result, "", nil
 }
 
-func showLogin(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "login.html")
-}
-
 func login(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 
@@ -870,7 +866,6 @@ func serverRest() (*http.Server, <-chan bool, error) {
 
 	if options.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
-		router.HandleFunc("/login", showLogin).Methods("GET")
 		router.HandleFunc("/signup", signup).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
@@ -893,12 +888,17 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	}
 
 	if options.OauthEndpoints {
+		router.HandleFunc("/oauth/login", login).Methods("POST")
 		router.HandleFunc("/oauth/token", oauth).Methods("POST")
 		router.HandleFunc("/oauth/revoke", revoke).Methods("POST")
-		router.HandleFunc("/oauth/authorize", authorize).Methods("POST")
+		router.HandleFunc("/oauth/authorize", authorize).Methods("GET")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
-
 	}
+
+	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("no route matched for: %v", r.URL)
+		w.WriteHeader(http.StatusNotFound)
+	})
 
 	s := &http.Server{
 		Addr:         ":" + strconv.Itoa(options.Port),

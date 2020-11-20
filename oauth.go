@@ -22,14 +22,22 @@ type OAuth struct {
 }
 
 func oauth(w http.ResponseWriter, r *http.Request) {
-	grantType := param("grant_type", r)
+	grantType, err := param("grant_type", r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+		return
+	}
 	if grantType == "refresh_token" {
 		err := basic(w, r)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
 			return
 		}
-		refreshToken := param("refresh_token", r)
+		refreshToken, err := param("refresh_token", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+			return
+		}
 		if refreshToken == "" {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-02, no refresh token")
 			return
@@ -53,16 +61,32 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 	} else if grantType == "authorization_code" {
 		err := basic(w, r)
 		if err != nil {
-			clientId := param("client_id", r)
-			clientSecret := param("client_secret", r)
+			clientId, err := param("client_id", r)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+				return
+			}
+			clientSecret, err := param("client_secret", r)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+				return
+			}
 			if clientId != options.OAuthUser || clientSecret != options.OAuthPass {
 				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
 				return
 			}
 		}
 
-		code := param("code", r)
-		codeVerifier := param("code_verifier", r)
+		code, err := param("code", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+			return
+		}
+		codeVerifier, err := param("code_verifier", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+			return
+		}
 		cc, err := checkCodeToken(code)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
@@ -188,60 +212,35 @@ func checkCodeToken(token string) (*CodeClaims, error) {
 //https://tools.ietf.org/html/rfc6749#section-1.3.1
 //https://developer.okta.com/blog/2019/08/22/okta-authjs-pkce
 func authorize(w http.ResponseWriter, r *http.Request) {
-	grantType := param("grant_type", r)
-	if grantType == "authorization_code" {
-		err := basic(w, r)
-		if err != nil {
-			clientId := param("client_id", r)
-			clientSecret := param("client_secret", r)
-			if clientId != options.OAuthUser || clientSecret != options.OAuthPass {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
-				return
-			}
-		}
-		email := param("username", r)
-		password := param("password", r)
-		codeChallenge := param("code_challenge", r)
-		codeChallengeMethod := param("code_challenge_method", r)
-		state := param("state", r)
-		//redirectUri := param("redirect_uri", r)
-		//scope := param("scope", r)
-
-		if email == "" || password == "" {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05, username, password empty")
-			return
-		}
-
-		_, errString, err := checkEmailPassword(email, password)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", errString, "ERR-oauth-06 %v", err)
-			return
-		}
-
-		encodedCodeToken, expiresAt, err := encodeCodeToken(email, codeChallenge, codeChallengeMethod)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-06 %v", err)
-			return
-		}
-
-		w.Write([]byte(`{"code":"` + encodedCodeToken + `",
-				"state":"` + state + `",
-				"expires_in":` + strconv.FormatInt(expiresAt, 10) + `}`))
-	} else {
-		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
+	responseType, err := param("response_type", r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-06 %v", err)
 		return
 	}
+	if responseType == "code" {
+		http.ServeFile(w, r, "login.html")
+	}
+
+	writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
 }
 
 func revoke(w http.ResponseWriter, r *http.Request) {
-	tokenHint := param("token_type_hint", r)
+	tokenHint, err := param("token_type_hint", r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", "blocked", "ERR-oauth-07, unsupported grant type")
+		return
+	}
 	if tokenHint == "refresh_token" {
-		oldToken := param("token", r)
+		oldToken, err := param("token", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", "blocked", "ERR-oauth-07, unsupported grant type")
+			return
+		}
 		if oldToken == "" {
 			writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", "blocked", "ERR-oauth-07, unsupported grant type")
 			return
 		}
-		_, err := resetRefreshToken(oldToken)
+		_, err = resetRefreshToken(oldToken)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", "blocked", "ERR-oauth-07, unsupported grant type")
 			return
@@ -275,16 +274,23 @@ func basic(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func param(name string, r *http.Request) string {
+func param(name string, r *http.Request) (string, error) {
 	n1 := mux.Vars(r)[name]
-	n2, _ := url.QueryUnescape(r.URL.Query().Get(name))
+	n2, err := url.QueryUnescape(r.URL.Query().Get(name))
+	if err != nil {
+		return "", err
+	}
+	err = r.ParseForm()
+	if err != nil {
+		return "", err
+	}
 	n3 := r.FormValue(name)
 
 	if n1 == "" {
 		if n2 == "" {
-			return n3
+			return n3, nil
 		}
-		return n2
+		return n2, nil
 	}
-	return n1
+	return n1, nil
 }

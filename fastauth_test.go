@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
 	"io/ioutil"
@@ -314,7 +313,7 @@ func doLogin(email string, pass string, totp string, secret string) *http.Respon
 		Email:                   email,
 		Password:                pass,
 		TOTP:                    totp,
-		CodeChallenge:           base64.URLEncoding.EncodeToString(h[:]),
+		CodeChallenge:           base64.RawURLEncoding.EncodeToString(h[:]),
 		CodeCodeChallengeMethod: "S256",
 	}
 
@@ -386,8 +385,8 @@ func getForgotEmailToken(email string) (string, error) {
 
 func TestSecret(t *testing.T) {
 	h := sha256.Sum256([]byte("test"))
-	s := base64.URLEncoding.EncodeToString(h[:])
-	fmt.Printf("[%v]", s)
+	s := base64.RawURLEncoding.EncodeToString(h[:])
+	assert.Equal(t, "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg", s)
 }
 
 func mainTest(opts *Opts) func() {

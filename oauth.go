@@ -94,7 +94,7 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 		}
 		if cc.CodeCodeChallengeMethod == "S256" {
 			h := sha256.Sum256([]byte(codeVerifier))
-			s := base64.StdEncoding.EncodeToString(h[:])
+			s := base64.URLEncoding.EncodeToString(h[:])
 			if cc.CodeChallenge != s {
 				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, auth challenge failed")
 				return

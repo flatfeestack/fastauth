@@ -314,7 +314,7 @@ func doLogin(email string, pass string, totp string, secret string) *http.Respon
 		Email:                   email,
 		Password:                pass,
 		TOTP:                    totp,
-		CodeChallenge:           base64.StdEncoding.EncodeToString(h[:]),
+		CodeChallenge:           base64.URLEncoding.EncodeToString(h[:]),
 		CodeCodeChallengeMethod: "S256",
 	}
 
@@ -386,7 +386,7 @@ func getForgotEmailToken(email string) (string, error) {
 
 func TestSecret(t *testing.T) {
 	h := sha256.Sum256([]byte("test"))
-	s := base64.StdEncoding.EncodeToString(h[:])
+	s := base64.URLEncoding.EncodeToString(h[:])
 	fmt.Printf("[%v]", s)
 }
 

@@ -549,7 +549,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
-	w.WriteHeader(302)
+	w.WriteHeader(303)
 }
 
 func displayEmail(w http.ResponseWriter, r *http.Request) {

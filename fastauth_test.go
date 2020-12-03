@@ -107,7 +107,7 @@ func TestLogin(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest", "", "")
-	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp.Body.Close()
 	shutdown()
@@ -119,7 +119,7 @@ func TestLoginFalse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest", "", "")
-	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest2", "", "")
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
@@ -160,7 +160,7 @@ func TestReset(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest2", "", "")
-	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp.Body.Close()
 	shutdown()
@@ -221,7 +221,7 @@ func TestLoginTOTP(t *testing.T) {
 	totp := doAllTOTP(oauth.AccessToken)
 
 	resp = doLogin("tom@test.ch", "testtest", totp.Now(), "")
-	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp = doLogin("tom@test.ch", "testtest", "", "")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)

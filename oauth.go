@@ -87,6 +87,15 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
 			return
 		}
+		//https://tools.ietf.org/html/rfc7636#section-4.1 length must be <= 43 <= 128
+		if len(codeVerifier) < 43 {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, min 43 chars")
+			return
+		}
+		if len(codeVerifier) > 128 {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, max 128 chars")
+			return
+		}
 		cc, err := checkCodeToken(code)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")

@@ -114,18 +114,18 @@ func TestLogin(t *testing.T) {
 
 func TestLoginFalse(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
-	resp := doAll("tom@test.ch", "testtest", "")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "", "")
+	resp = doLogin("tom@test.ch", "testtest", "", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest2", "", "")
+	resp = doLogin("tom@test.ch", "testtest2", "", "0123456789012345678901234567890123456789012")
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-06, user tom@test.ch password mismatch") > 0)
 
-	resp = doLogin("tom@test.ch2", "testtest", "", "")
+	resp = doLogin("tom@test.ch2", "testtest", "", "0123456789012345678901234567890123456789012")
 	bodyBytes, _ = ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-01, DB select, tom@test.ch2 err sql: no rows in result set") > 0)
@@ -136,7 +136,7 @@ func TestLoginFalse(t *testing.T) {
 
 func TestRefresh(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
-	resp := doAll("tom@test.ch", "testtest", "test")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	oauth := OAuth{}
 	json.NewDecoder(resp.Body).Decode(&oauth)
@@ -147,7 +147,7 @@ func TestRefresh(t *testing.T) {
 func TestReset(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
-	resp := doAll("tom@test.ch", "testtest", "")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doReset("tom@test.ch")
@@ -158,7 +158,7 @@ func TestReset(t *testing.T) {
 	resp = doConfirmReset("tom@test.ch", token, "testtest2")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest2", "", "")
+	resp = doLogin("tom@test.ch", "testtest2", "", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp.Body.Close()
@@ -168,7 +168,7 @@ func TestReset(t *testing.T) {
 func TestResetFailed(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
-	resp := doAll("tom@test.ch", "testtest", "")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doReset("tom@test.ch")
@@ -179,7 +179,7 @@ func TestResetFailed(t *testing.T) {
 	resp = doConfirmReset("tom@test.ch", token, "testtest2")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "", "")
+	resp = doLogin("tom@test.ch", "testtest", "", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	resp.Body.Close()
@@ -188,7 +188,7 @@ func TestResetFailed(t *testing.T) {
 
 func TestTOTP(t *testing.T) {
 	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
-	resp := doAll("tom@test.ch", "testtest", "")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	oauth := OAuth{}
 	json.NewDecoder(resp.Body).Decode(&oauth)
@@ -211,7 +211,7 @@ func TestTOTP(t *testing.T) {
 
 func TestLoginTOTP(t *testing.T) {
 	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
-	resp := doAll("tom@test.ch", "testtest", "")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	oauth := OAuth{}
@@ -219,10 +219,10 @@ func TestLoginTOTP(t *testing.T) {
 
 	totp := doAllTOTP(oauth.AccessToken)
 
-	resp = doLogin("tom@test.ch", "testtest", totp.Now(), "")
+	resp = doLogin("tom@test.ch", "testtest", totp.Now(), "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "", "")
+	resp = doLogin("tom@test.ch", "testtest", "", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 
 	resp.Body.Close()

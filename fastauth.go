@@ -86,6 +86,7 @@ type Opts struct {
 	Limiter        bool
 	Redirects      string
 	PasswordFlow   bool
+	Scope          string
 }
 
 func NewOpts() *Opts {
@@ -114,6 +115,7 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
 	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
 	flag.StringVar(&opts.Redirects, "pwflow", LookupEnv("PWFLOW"), "enable password flow, default disabled")
+	flag.StringVar(&opts.Scope, "scoce", LookupEnv("SCOPE"), "scope, default is vorsorgeapp")
 	flag.Parse()
 	return opts
 }
@@ -129,6 +131,7 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
 	opts.PasswordFlow = false
+	opts.Scope = "vorsorgeapp"
 
 	if opts.Dev != "" {
 		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
@@ -265,7 +268,9 @@ type Credentials struct {
 }
 
 type TokenClaims struct {
-	Role string `json:"role,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
 	jwt.Claims
 }
 type RefreshClaims struct {
@@ -1010,9 +1015,10 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(role string, subject string) (string, error) {
+func encodeAccessToken(role string, subject string, scope string) (string, error) {
 	tokenClaims := &TokenClaims{
-		Role: role,
+		Role:  role,
+		Scope: scope,
 		Claims: jwt.Claims{
 			Expiry:  jwt.NewNumericDate(time.Now().Add(tokenExp)),
 			Subject: subject,

@@ -389,6 +389,17 @@ func TestSecret(t *testing.T) {
 	assert.Equal(t, "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg", s)
 }
 
+func TestGetAttrDN(t *testing.T) {
+
+	assert.Equal(t,
+		getAttrDN("CN=tom,OU=P_Internal,OU=P_Users,DC=test,DC=ch", "cn"),
+		"tom")
+
+	assert.Equal(t,
+		getAttrDN("CN=tom,OU=P_Internal,OU=P_Users,DC=test,DC=ch", "cn"),
+		getAttrDN("cn=tom,ou=P_Internal,ou=P_Users,dc=test,dc=ch", "CN"))
+}
+
 func mainTest(opts *Opts) func() {
 	defaultOpts(opts)
 	options = opts

@@ -46,7 +46,7 @@ func getAttrDN(dn string, atyp string) string {
 	for _, rdn := range parsedDN.RDNs {
 		for _, rdnAttr := range rdn.Attributes {
 			log.Printf("found attr %v", rdnAttr.Type)
-			if rdnAttr.Type == atyp {
+			if strings.ToLower(rdnAttr.Type) == strings.ToLower(atyp) {
 				return rdnAttr.Value
 			}
 		}

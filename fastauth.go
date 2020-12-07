@@ -428,7 +428,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 
 	refreshToken := base32.StdEncoding.EncodeToString(rnd[32:48])
 
-	err = insertUser(salt, cred.Email, dk, emailToken, refreshToken)
+	err = insertUser(salt, cred.Email, dk, "USR", emailToken, refreshToken)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-06, insert user failed: %v", err)
 		return

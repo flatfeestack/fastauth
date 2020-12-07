@@ -85,6 +85,7 @@ type Opts struct {
 	DetailedError  bool
 	Limiter        bool
 	Redirects      string
+	PasswordFlow   bool
 }
 
 func NewOpts() *Opts {
@@ -112,6 +113,7 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
 	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
+	flag.StringVar(&opts.Redirects, "pwflow", LookupEnv("PWFLOW"), "enable password flow, default disabled")
 	flag.Parse()
 	return opts
 }
@@ -126,6 +128,7 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
+	opts.PasswordFlow = false
 
 	if opts.Dev != "" {
 		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
@@ -153,6 +156,7 @@ func defaultOpts(opts *Opts) {
 		opts.LdapServer = true
 		opts.DetailedError = true
 		opts.Limiter = false
+		opts.PasswordFlow = true
 
 		if opts.Users == "" {
 			opts.Users = "tom:123"

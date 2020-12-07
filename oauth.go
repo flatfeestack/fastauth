@@ -139,6 +139,58 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 		w.Write(oauthEnc)
 		return
 
+	} else if grantType == "password" && options.PasswordFlow {
+		err := basic(w, r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
+			return
+		}
+		email, err := param("username", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05a, no username")
+			return
+		}
+		password, err := param("password", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05b, no password")
+			return
+		}
+		scope, err := param("scope", r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05c, no scope")
+			return
+		}
+		if email == "" || password == "" || scope == "" {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05, username, password, or scope empty")
+			return
+		}
+
+		result, errString, err := checkEmailPassword(email, password)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", errString, "ERR-oauth-06 %v", err)
+			return
+		}
+
+		encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, email)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-07, cannot verify refresh token %v", err)
+			return
+		}
+
+		oauth := OAuth{
+			AccessToken:  encodedAccessToken,
+			TokenType:    "Bearer",
+			RefreshToken: encodedRefreshToken,
+			Expires:      strconv.FormatInt(expiresAt, 10),
+		}
+		oauthEnc, err := json.Marshal(oauth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+			return
+		}
+		w.Write(oauthEnc)
+		return
+
 	} else {
 		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-09, unsupported grant type")
 		return

@@ -46,7 +46,7 @@ func getAttrDN(dn string, atyp string) string {
 	for _, rdn := range parsedDN.RDNs {
 		for _, rdnAttr := range rdn.Attributes {
 			log.Printf("found attr %v", rdnAttr.Type)
-			if rdnAttr.Type == atyp {
+			if strings.ToLower(rdnAttr.Type) == strings.ToLower(atyp) {
 				return rdnAttr.Value
 			}
 		}
@@ -82,21 +82,17 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	_, err := dbSelect(cn)
+	dbRes, err := dbSelect(cn)
 	if err != nil {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
 		w.Write(res)
 		return
 	}
 
-	var e message.SearchResultEntry
-	if strings.Index(string(r.BaseObject()), "cn") >= 0 {
-		e = ldap.NewSearchResultEntry(string(r.BaseObject()))
-		w.Write(e)
-	} else {
-		e = ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
-		w.Write(e)
-	}
+	e := ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
+	e.AddAttribute("cn", message.AttributeValue(string(dbRes.role)))
+	w.Write(e)
+
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
 }

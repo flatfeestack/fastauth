@@ -35,14 +35,14 @@ func dbSelect(email string) (*dbRes, error) {
 	return &res, nil
 }
 
-func insertUser(salt []byte, email string, dk []byte, emailToken string, refreshToken string) error {
-	stmt, err := db.Prepare("INSERT INTO auth (email, password, role, salt, emailToken, refreshToken) VALUES (?, ?, 'USR', ?, ?, ?)")
+func insertUser(salt []byte, email string, dk []byte, role string, emailToken string, refreshToken string) error {
+	stmt, err := db.Prepare("INSERT INTO auth (email, password, role, salt, emailToken, refreshToken) VALUES (?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(email, dk, salt, emailToken, refreshToken)
+	res, err := stmt.Exec(email, dk, []byte(role), salt, emailToken, refreshToken)
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
@@ -181,7 +181,7 @@ func handleErr(res sql.Result, err error, info string, email string) error {
 
 ///////// Setup
 
-func addInitialUser(username string, password string) error {
+func addInitialUserWithRole(username string, password string, role string) error {
 	res, err := dbSelect(username)
 	if res == nil || err != nil {
 		salt := []byte{0}
@@ -189,7 +189,7 @@ func addInitialUser(username string, password string) error {
 		if err != nil {
 			return err
 		}
-		err = insertUser(salt, username, dk, "emailToken", "refreshToken")
+		err = insertUser(salt, username, dk, role, "emailToken", "refreshToken")
 		if err != nil {
 			return err
 		}
@@ -235,13 +235,22 @@ func setupDB() {
 		//add user for development
 		users := strings.Split(options.Users, ";")
 		for _, user := range users {
-			userpw := strings.Split(user, ":")
-			if len(userpw) == 2 {
-				err := addInitialUser(userpw[0], userpw[1])
+			userPwRole := strings.Split(user, ":")
+			if len(userPwRole) == 2 {
+				role := "USR"
+				err := addInitialUserWithRole(userPwRole[0], userPwRole[1], role)
 				if err == nil {
-					log.Printf("insterted user %v", userpw[0])
+					log.Printf("insterted user %v", userPwRole[0])
 				} else {
-					log.Printf("could not insert %v", userpw[0])
+					log.Printf("could not insert %v", userPwRole[0])
+				}
+			} else if len(userPwRole) == 3 {
+				role := userPwRole[2]
+				err := addInitialUserWithRole(userPwRole[0], userPwRole[1], role)
+				if err == nil {
+					log.Printf("insterted user %v", userPwRole[0])
+				} else {
+					log.Printf("could not insert %v", userPwRole[0])
 				}
 			} else {
 				log.Printf("username and password need to be seperated by ':'")

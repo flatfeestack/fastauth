@@ -92,14 +92,14 @@ type Opts struct {
 func NewOpts() *Opts {
 	opts := &Opts{}
 	flag.StringVar(&opts.Dev, "dev", LookupEnv("DEV"), "Dev settings with initial secret")
-	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer")
+	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer, default in dev is my-issuer")
 	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening HTTP port")
 	flag.IntVar(&opts.Ldap, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
 	flag.StringVar(&opts.DBPath, "db-path", LookupEnv("DB_PATH"), "DB path")
 	flag.StringVar(&opts.DBDriver, "db-driver", LookupEnv("DB_DRIVER"), "DB driver")
 	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.UrlSMS, "sms-url", LookupEnv("SMS_URL"), "SMS service URL")
-	flag.StringVar(&opts.Audience, "audience", LookupEnv("AUDIENCE"), "Audience")
+	flag.StringVar(&opts.Audience, "audience", LookupEnv("AUDIENCE"), "Audience, default in dev is my-audience")
 	flag.IntVar(&opts.ExpireAccess, "expire-access", LookupEnvInt("EXPIRE_ACCESS"), "Access token expiration in seconds")
 	flag.IntVar(&opts.ExpireRefresh, "expire-refresh", LookupEnvInt("EXPIRE_REFRESH"), "Refresh token expiration in seconds")
 	flag.IntVar(&opts.ExpireCode, "expire-code", LookupEnvInt("EXPIRE_CODE"), "Authtoken flow expiration in seconds")
@@ -115,7 +115,7 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
 	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
 	flag.StringVar(&opts.Redirects, "pwflow", LookupEnv("PWFLOW"), "enable password flow, default disabled")
-	flag.StringVar(&opts.Scope, "scoce", LookupEnv("SCOPE"), "scope, default is vorsorgeapp")
+	flag.StringVar(&opts.Scope, "scope", LookupEnv("SCOPE"), "scope, default in dev is my-scope")
 	flag.Parse()
 	return opts
 }
@@ -131,13 +131,13 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
 	opts.PasswordFlow = false
-	opts.Scope = "vorsorgeapp"
 
 	if opts.Dev != "" {
-		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
+		opts.Scope = setDefault(opts.Scope, "my-scope")
+		opts.Audience = setDefault(opts.Audience, "my-audience")
+		opts.Issuer = setDefault(opts.Issuer, "my-issuer")
 		opts.UrlEmail = setDefault(opts.UrlEmail, "http://localhost:8080/send/email/{action}/{email}/{token}")
 		opts.UrlSMS = setDefault(opts.UrlSMS, "http://localhost:8080/send/sms/{sms}/{token}")
-		opts.Audience = setDefault(opts.Audience, "DevAudience")
 		opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
 
 		h := crc64.MakeTable(0xC96C5795D7870F42)
@@ -1015,13 +1015,15 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(role string, subject string, scope string) (string, error) {
+func encodeAccessToken(role string, subject string, scope string, audience string, issuer string) (string, error) {
 	tokenClaims := &TokenClaims{
 		Role:  role,
 		Scope: scope,
 		Claims: jwt.Claims{
-			Expiry:  jwt.NewNumericDate(time.Now().Add(tokenExp)),
-			Subject: subject,
+			Expiry:   jwt.NewNumericDate(time.Now().Add(tokenExp)),
+			Subject:  subject,
+			Audience: []string{audience},
+			Issuer:   issuer,
 		},
 	}
 	var sig jose.Signer

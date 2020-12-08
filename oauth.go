@@ -219,7 +219,7 @@ func refresh(token string) (string, string, int64, error) {
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	encodedAccessToken, err := encodeAccessToken(string(result.role), email, options.Scope)
+	encodedAccessToken, err := encodeAccessToken(string(result.role), email, options.Scope, options.Audience, options.Issuer)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

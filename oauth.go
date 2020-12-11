@@ -312,6 +312,11 @@ func revoke(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func logout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Location", r.URL.Query()["redirect_uri"][0])
+	w.WriteHeader(303)
+}
+
 func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if options.OAuthUser != "" || options.OAuthPass != "" {

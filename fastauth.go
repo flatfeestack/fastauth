@@ -910,6 +910,8 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/oauth/revoke", revoke).Methods("POST")
 		router.HandleFunc("/oauth/authorize", authorize).Methods("GET")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
+
+		router.HandleFunc("/authen/logout", logout).Methods("GET")
 	}
 
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -145,7 +145,10 @@ func defaultOpts(opts *Opts) {
 		if err != nil {
 			log.Fatalf("cannot generate rsa key %v", err)
 		}
-		encPrivRSA := x509.MarshalPKCS1PrivateKey(rsaPrivKey)
+		encPrivRSA, err := x509.MarshalPKCS8PrivateKey(rsaPrivKey)
+		if err != nil {
+			log.Fatalf("cannot generate rsa key %v", err)
+		}
 		opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
 
 		_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))))
@@ -185,18 +188,19 @@ func defaultOpts(opts *Opts) {
 	}
 
 	if opts.RS256 != "" {
-		rsa, err := base32.StdEncoding.DecodeString(opts.RS256)
+		rsaDec, err := base32.StdEncoding.DecodeString(opts.RS256)
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.RS256)
 		}
-		privRSA, err = x509.ParsePKCS1PrivateKey(rsa)
+		i, err := x509.ParsePKCS8PrivateKey(rsaDec)
+		privRSA = i.(*rsa.PrivateKey)
 		if err != nil {
-			log.Fatalf("cannot decode %v", rsa)
+			log.Fatalf("cannot decode %v", rsaDec)
 		}
 		k := jose.JSONWebKey{Key: privRSA.Public()}
 		kid, err := k.Thumbprint(crypto.SHA256)
 		if err != nil {
-			log.Fatalf("cannot decode %v", rsa)
+			log.Fatalf("cannot decode %v", rsaDec)
 		}
 		privRSAKid = hex.EncodeToString(kid)
 	}
@@ -557,6 +561,10 @@ func login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
 		return
 	}
+
+	//encodedAccessToken, err := encodeAccessToken(string(result.role), "tom", options.Scope, options.Audience, options.Issuer)
+	//log.Printf("accesstokeen: [%v]\n", encodedAccessToken)
+
 	w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
 	w.WriteHeader(303)
 }

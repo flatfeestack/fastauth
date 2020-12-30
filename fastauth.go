@@ -110,6 +110,12 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
+
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
 	flag.Parse()
 	return opts
 }

@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -102,8 +105,8 @@ func TestLogin(t *testing.T) {
 	resp = doConfirm("tom@test.ch", token)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest", "", "")
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp.Body.Close()
 	shutdown()
@@ -111,18 +114,18 @@ func TestLogin(t *testing.T) {
 
 func TestLoginFalse(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
-	resp := doAll("tom@test.ch", "testtest")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest", "", "0123456789012345678901234567890123456789012")
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest2", "")
+	resp = doLogin("tom@test.ch", "testtest2", "", "0123456789012345678901234567890123456789012")
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-06, user tom@test.ch password mismatch") > 0)
 
-	resp = doLogin("tom@test.ch2", "testtest", "")
+	resp = doLogin("tom@test.ch2", "testtest", "", "0123456789012345678901234567890123456789012")
 	bodyBytes, _ = ioutil.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.True(t, strings.Index(string(bodyBytes), "ERR-checkEmail-01, DB select, tom@test.ch2 err sql: no rows in result set") > 0)
@@ -133,25 +136,18 @@ func TestLoginFalse(t *testing.T) {
 
 func TestRefresh(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
-	resp := doAll("tom@test.ch", "testtest")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	token1 := resp.Header.Get("Token")
-
-	time.Sleep(time.Second)
-	cookie := resp.Cookies()[0]
-	resp = doRefresh(cookie.Value)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	token2 := resp.Header.Get("Token")
-	assert.NotEqual(t, token1, token2)
-
-	resp.Body.Close()
+	oauth := OAuth{}
+	json.NewDecoder(resp.Body).Decode(&oauth)
+	assert.NotEqual(t, "", oauth.AccessToken)
 	shutdown()
 }
 
 func TestReset(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
-	resp := doAll("tom@test.ch", "testtest")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doReset("tom@test.ch")
@@ -162,8 +158,8 @@ func TestReset(t *testing.T) {
 	resp = doConfirmReset("tom@test.ch", token, "testtest2")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest2", "")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp = doLogin("tom@test.ch", "testtest2", "", "0123456789012345678901234567890123456789012")
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
 
 	resp.Body.Close()
 	shutdown()
@@ -172,7 +168,7 @@ func TestReset(t *testing.T) {
 func TestResetFailed(t *testing.T) {
 	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
 
-	resp := doAll("tom@test.ch", "testtest")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp = doReset("tom@test.ch")
@@ -183,7 +179,7 @@ func TestResetFailed(t *testing.T) {
 	resp = doConfirmReset("tom@test.ch", token, "testtest2")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "")
+	resp = doLogin("tom@test.ch", "testtest", "", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	resp.Body.Close()
@@ -192,11 +188,12 @@ func TestResetFailed(t *testing.T) {
 
 func TestTOTP(t *testing.T) {
 	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
-	resp := doAll("tom@test.ch", "testtest")
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	token := resp.Header.Get("Token")
+	oauth := OAuth{}
+	json.NewDecoder(resp.Body).Decode(&oauth)
 
-	resp = doTOTP(token)
+	resp = doTOTP(oauth.AccessToken)
 	p := ProvisioningUri{}
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	json.Unmarshal(bodyBytes, &p)
@@ -205,7 +202,7 @@ func TestTOTP(t *testing.T) {
 	totp := newTOTP(secret[0])
 	conf := totp.Now()
 
-	resp = doTOTPConfirm(conf, token)
+	resp = doTOTPConfirm(conf, oauth.AccessToken)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp.Body.Close()
@@ -214,16 +211,18 @@ func TestTOTP(t *testing.T) {
 
 func TestLoginTOTP(t *testing.T) {
 	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
-	resp := doAll("tom@test.ch", "testtest")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	token := resp.Header.Get("Token")
-
-	totp := doAllTOTP(token)
-
-	resp = doLogin("tom@test.ch", "testtest", totp.Now())
+	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp = doLogin("tom@test.ch", "testtest", "")
+	oauth := OAuth{}
+	json.NewDecoder(resp.Body).Decode(&oauth)
+
+	totp := doAllTOTP(oauth.AccessToken)
+
+	resp = doLogin("tom@test.ch", "testtest", totp.Now(), "0123456789012345678901234567890123456789012")
+	assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+	resp = doLogin("tom@test.ch", "testtest", "", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 
 	resp.Body.Close()
@@ -277,34 +276,59 @@ func doReset(email string) *http.Response {
 	return resp
 }
 
-func doAll(email string, pass string) *http.Response {
+func doAll(email string, pass string, secret string) *http.Response {
 	resp := doSignup(email, pass)
 	token := token(email)
 	resp = doConfirm(email, token)
-	resp = doLogin(email, pass, "")
+	resp = doLogin(email, pass, "", secret)
+	code := resp.Header.Get("Location")[6:]
+	resp = doCode(code, secret)
 	return resp
 }
 
-func doRefresh(cookie string) *http.Response {
-	req, _ := http.NewRequest("POST", testUrl+"/refresh", nil)
-	req.Header.Set("Content-Type", "application/json")
-	c := http.Cookie{Name: "refresh", Value: cookie, Path: "/refresh", Secure: false, HttpOnly: true}
-	req.AddCookie(&c)
+func doCode(codeToken string, codeVerifier string) *http.Response {
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", codeToken)
+	data.Set("code_verifier", codeVerifier)
+	req, _ := http.NewRequest("POST", testUrl+"/oauth/token", strings.NewReader(data.Encode()))
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	resp, _ := http.DefaultClient.Do(req)
 	return resp
 }
 
-func doLogin(email string, pass string, totp string) *http.Response {
+func doRefresh(refreshToken string) *http.Response {
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", refreshToken)
+	req, _ := http.NewRequest("POST", testUrl+"/oauth/token", strings.NewReader(data.Encode()))
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	resp, _ := http.DefaultClient.Do(req)
+	return resp
+}
+
+func doLogin(email string, pass string, totp string, secret string) *http.Response {
+	h := sha256.Sum256([]byte(secret))
 	data := Credentials{
-		Email:    email,
-		Password: pass,
-		TOTP:     totp,
+		Email:                   email,
+		Password:                pass,
+		TOTP:                    totp,
+		CodeChallenge:           base64.RawURLEncoding.EncodeToString(h[:]),
+		CodeCodeChallengeMethod: "S256",
 	}
+
+	//do not follow redirects: https://stackoverflow.com/questions/23297520/how-can-i-make-the-go-http-client-not-follow-redirects-automatically
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)
-	req, _ := http.NewRequest("POST", testUrl+"/login", body)
+	req, _ := http.NewRequest(http.MethodPost, testUrl+"/login", body)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, _ := client.Do(req)
 	return resp
 }
 
@@ -357,6 +381,23 @@ func getForgotEmailToken(email string) (string, error) {
 		return "", err
 	}
 	return forgetEmailToken, nil
+}
+
+func TestSecret(t *testing.T) {
+	h := sha256.Sum256([]byte("test"))
+	s := base64.RawURLEncoding.EncodeToString(h[:])
+	assert.Equal(t, "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg", s)
+}
+
+func TestGetAttrDN(t *testing.T) {
+
+	assert.Equal(t,
+		getAttrDN("CN=tom,OU=P_Internal,OU=P_Users,DC=test,DC=ch", "cn"),
+		"tom")
+
+	assert.Equal(t,
+		getAttrDN("CN=tom,OU=P_Internal,OU=P_Users,DC=test,DC=ch", "cn"),
+		getAttrDN("cn=tom,ou=P_Internal,ou=P_Users,dc=test,dc=ch", "CN"))
 }
 
 func mainTest(opts *Opts) func() {

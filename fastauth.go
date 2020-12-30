@@ -17,6 +17,7 @@ import (
 	"github.com/dimiro1/banner"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/schema"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserver"
@@ -26,6 +27,7 @@ import (
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"hash/crc64"
+	"io/ioutil"
 	"log"
 	rnd "math/rand"
 	"net"
@@ -58,44 +60,46 @@ const (
 )
 
 type Opts struct {
-	Dev               string
-	Issuer            string
-	Port              int
-	Ldap              int
-	DBPath            string
-	DBDriver          string
-	UrlEmail          string
-	UrlSMS            string
-	Audience          string
-	ExpireAccess      int
-	ExpireRefresh     int
-	ExpireCode        int
-	HS256             string
-	EdDSA             string
-	RS256             string
-	OAuthUser         string
-	OAuthPass         string
-	ResetRefresh      bool
-	RefreshCookiePath string
-	Users             string
-	UserEndpoints     bool
-	OauthEndpoints    bool
-	LdapServer        bool
-	DetailedError     bool
-	Limiter           bool
+	Dev            string
+	Issuer         string
+	Port           int
+	Ldap           int
+	DBPath         string
+	DBDriver       string
+	UrlEmail       string
+	UrlSMS         string
+	Audience       string
+	ExpireAccess   int
+	ExpireRefresh  int
+	ExpireCode     int
+	HS256          string
+	EdDSA          string
+	RS256          string
+	OAuthUser      string
+	OAuthPass      string
+	ResetRefresh   bool
+	Users          string
+	UserEndpoints  bool
+	OauthEndpoints bool
+	LdapServer     bool
+	DetailedError  bool
+	Limiter        bool
+	Redirects      string
+	PasswordFlow   bool
+	Scope          string
 }
 
 func NewOpts() *Opts {
 	opts := &Opts{}
 	flag.StringVar(&opts.Dev, "dev", LookupEnv("DEV"), "Dev settings with initial secret")
-	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer")
+	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer, default in dev is my-issuer")
 	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening HTTP port")
 	flag.IntVar(&opts.Ldap, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
 	flag.StringVar(&opts.DBPath, "db-path", LookupEnv("DB_PATH"), "DB path")
 	flag.StringVar(&opts.DBDriver, "db-driver", LookupEnv("DB_DRIVER"), "DB driver")
 	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.UrlSMS, "sms-url", LookupEnv("SMS_URL"), "SMS service URL")
-	flag.StringVar(&opts.Audience, "audience", LookupEnv("SMS_URL"), "Audience")
+	flag.StringVar(&opts.Audience, "audience", LookupEnv("AUDIENCE"), "Audience, default in dev is my-audience")
 	flag.IntVar(&opts.ExpireAccess, "expire-access", LookupEnvInt("EXPIRE_ACCESS"), "Access token expiration in seconds")
 	flag.IntVar(&opts.ExpireRefresh, "expire-refresh", LookupEnvInt("EXPIRE_REFRESH"), "Refresh token expiration in seconds")
 	flag.IntVar(&opts.ExpireCode, "expire-code", LookupEnvInt("EXPIRE_CODE"), "Authtoken flow expiration in seconds")
@@ -103,13 +107,15 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.RS256, "rs256", LookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", LookupEnv("EDDSA"), "EdDSA key")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", LookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
-	flag.StringVar(&opts.RefreshCookiePath, "refresh-cookie-path", LookupEnv("REFRESH_COOKIE_PATH"), "Refresh cookie path, default is /refresh")
 	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
 	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
+	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
+	flag.StringVar(&opts.Redirects, "pwflow", LookupEnv("PWFLOW"), "enable password flow, default disabled")
+	flag.StringVar(&opts.Scope, "scope", LookupEnv("SCOPE"), "scope, default in dev is my-scope")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -130,13 +136,14 @@ func defaultOpts(opts *Opts) {
 	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
 	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
 	opts.ResetRefresh = false
-	opts.RefreshCookiePath = setDefault(opts.RefreshCookiePath, "/refresh")
+	opts.PasswordFlow = false
 
 	if opts.Dev != "" {
-		opts.Issuer = setDefault(opts.Issuer, "DevIssuer")
+		opts.Scope = setDefault(opts.Scope, "my-scope")
+		opts.Audience = setDefault(opts.Audience, "my-audience")
+		opts.Issuer = setDefault(opts.Issuer, "my-issuer")
 		opts.UrlEmail = setDefault(opts.UrlEmail, "http://localhost:8080/send/email/{action}/{email}/{token}")
 		opts.UrlSMS = setDefault(opts.UrlSMS, "http://localhost:8080/send/sms/{sms}/{token}")
-		opts.Audience = setDefault(opts.Audience, "DevAudience")
 		opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
 
 		h := crc64.MakeTable(0xC96C5795D7870F42)
@@ -144,7 +151,10 @@ func defaultOpts(opts *Opts) {
 		if err != nil {
 			log.Fatalf("cannot generate rsa key %v", err)
 		}
-		encPrivRSA := x509.MarshalPKCS1PrivateKey(rsaPrivKey)
+		encPrivRSA, err := x509.MarshalPKCS8PrivateKey(rsaPrivKey)
+		if err != nil {
+			log.Fatalf("cannot generate rsa key %v", err)
+		}
 		opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
 
 		_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))))
@@ -153,14 +163,16 @@ func defaultOpts(opts *Opts) {
 		}
 		opts.EdDSA = base32.StdEncoding.EncodeToString(edPrivKey)
 
-		opts.OAuthUser = setDefault(opts.OAuthUser, "user")
-		opts.OAuthPass = setDefault(opts.OAuthPass, "pass")
-
 		opts.OauthEndpoints = true
 		opts.UserEndpoints = true
 		opts.LdapServer = true
 		opts.DetailedError = true
 		opts.Limiter = false
+		opts.PasswordFlow = true
+
+		if opts.Users == "" {
+			opts.Users = "tom:123"
+		}
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
 		log.Printf("DEV mode active, rsa is hex(%v)", opts.RS256)
@@ -182,18 +194,19 @@ func defaultOpts(opts *Opts) {
 	}
 
 	if opts.RS256 != "" {
-		rsa, err := base32.StdEncoding.DecodeString(opts.RS256)
+		rsaDec, err := base32.StdEncoding.DecodeString(opts.RS256)
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.RS256)
 		}
-		privRSA, err = x509.ParsePKCS1PrivateKey(rsa)
+		i, err := x509.ParsePKCS8PrivateKey(rsaDec)
+		privRSA = i.(*rsa.PrivateKey)
 		if err != nil {
-			log.Fatalf("cannot decode %v", rsa)
+			log.Fatalf("cannot decode %v", rsaDec)
 		}
 		k := jose.JSONWebKey{Key: privRSA.Public()}
 		kid, err := k.Thumbprint(crypto.SHA256)
 		if err != nil {
-			log.Fatalf("cannot decode %v", rsa)
+			log.Fatalf("cannot decode %v", rsaDec)
 		}
 		privRSAKid = hex.EncodeToString(kid)
 	}
@@ -248,13 +261,26 @@ func LookupEnvInt(key string) int {
 }
 
 type Credentials struct {
-	Email    string `json:"email,omitempty"`
-	Password string `json:"password"`
-	TOTP     string `json:"totp,omitempty"`
+	Email    string `json:"email,omitempty" schema:"email"`
+	Password string `json:"password" schema:"password,required"`
+	TOTP     string `json:"totp,omitempty" schema:"totp"`
+	//here comes oauth, leave empty on regular login
+	//If you want to use oauth, you need to configure
+	//client-id with a matching redirect-uri from the
+	//command line
+	ClientId                string `json:"client_id,omitempty" schema:"client_id"`
+	ResponseType            string `json:"response_type,omitempty" schema:"response_type"`
+	State                   string `json:"state,omitempty" schema:"state"`
+	Scope                   string `json:"scope" schema:"scope"`
+	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
+	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
 }
 
 type TokenClaims struct {
-	Role string `json:"role,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
 	jwt.Claims
 }
 type RefreshClaims struct {
@@ -265,8 +291,8 @@ type RefreshClaims struct {
 type CodeClaims struct {
 	ExpiresAt               int64  `json:"exp,omitempty"`
 	Subject                 string `json:"role,omitempty"`
-	CodeChallenge           string `json:"code-challenge,omitempty"`
-	CodeCodeChallengeMethod string `json:"code-challenge-method,omitempty"`
+	CodeChallenge           string `json:"code_challenge,omitempty"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
 }
 
 type ProvisioningUri struct {
@@ -329,34 +355,6 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 	}
 }
 
-func refresh(w http.ResponseWriter, r *http.Request) {
-	//https://medium.com/monstar-lab-bangladesh-engineering/jwt-auth-in-go-part-2-refresh-tokens-d334777ca8a0
-
-	//check if refresh token matches
-	c, err := r.Cookie("refresh")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-refresh-01, cookie not found: %v", err)
-		return
-	}
-	accessToken, refreshToken, expiresAt, err := refresh0(c.Value)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-refresh-02 %v", err)
-		return
-	}
-	w.Header().Set("Token", accessToken)
-
-	cookie := http.Cookie{
-		Name:     "refresh",
-		Value:    refreshToken,
-		Path:     options.RefreshCookiePath,
-		HttpOnly: true,
-		Secure:   options.Dev == "",
-		Expires:  time.Unix(expiresAt, 0),
-	}
-	w.Header().Set("Set-Cookie", cookie.String())
-	w.WriteHeader(http.StatusOK)
-}
-
 func checkRefreshToken(token string) (*RefreshClaims, error) {
 	tok, err := jwt.ParseSigned(token)
 	if err != nil {
@@ -386,45 +384,6 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
 	}
 	return refreshClaims, nil
-}
-
-func refresh0(token string) (string, string, int64, error) {
-	refreshClaims, err := checkRefreshToken(token)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
-	}
-
-	result, err := dbSelect(refreshClaims.Subject)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", refreshClaims.Subject, err)
-	}
-
-	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", refreshClaims.Subject, err)
-	}
-
-	if result.refreshToken == nil || refreshClaims.Token != *result.refreshToken {
-		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
-	}
-
-	encodedAccessToken, err := encodeAccessToken(string(result.role), refreshClaims.Subject)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", refreshClaims.Subject, err)
-	}
-
-	refreshToken := *result.refreshToken
-	if options.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken)
-		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", refreshClaims.Subject, err)
-		}
-	}
-
-	encodedRefreshToken, expiresAt, err := encodeRefreshToken(refreshClaims.Subject, refreshToken)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", refreshClaims.Subject, err)
-	}
-	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
 }
 
 func confirmEmail(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +438,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 
 	refreshToken := base32.StdEncoding.EncodeToString(rnd[32:48])
 
-	err = insertUser(salt, cred.Email, dk, emailToken, refreshToken)
+	err = insertUser(salt, cred.Email, dk, "USR", emailToken, refreshToken)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-06, insert user failed: %v", err)
 		return
@@ -538,10 +497,32 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 
 func login(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
-	err := json.NewDecoder(r.Body).Decode(&cred)
+
+	//https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
+	var bodyCopy []byte
+	var err error
+	if r.Body != nil {
+		bodyCopy, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
+			return
+		}
+	}
+
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
+	err = json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse JSON credentials %v", err)
-		return
+		r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
+		err = r.ParseForm()
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
+			return
+		}
+		err = schema.NewDecoder().Decode(&cred, r.PostForm)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-02, cannot populate POST data %v", err)
+			return
+		}
 	}
 
 	result, errString, err := checkEmailPassword(cred.Email, cred.Password)
@@ -580,39 +561,18 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	encodedAccessToken, err := encodeAccessToken(string(result.role), cred.Email)
+	//return the code flow
+	encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-11, cannot set access token for %v, %v", cred.Email, err)
+		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
 		return
 	}
 
-	refreshToken := *result.refreshToken
-	if options.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-12, cannot reset access token for %v, %v", cred.Email, err)
-			return
-		}
-	}
+	//encodedAccessToken, err := encodeAccessToken(string(result.role), "tom", options.Scope, options.Audience, options.Issuer)
+	//log.Printf("accesstokeen: [%v]\n", encodedAccessToken)
 
-	encodedRefreshToken, expiresAt, err := encodeRefreshToken(cred.Email, refreshToken)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-13, cannot set refresh token for %v, %v", cred.Email, err)
-		return
-	}
-
-	w.Header().Set("Token", encodedAccessToken)
-
-	cookie := http.Cookie{
-		Name:     "refresh",
-		Value:    encodedRefreshToken,
-		Path:     options.RefreshCookiePath,
-		HttpOnly: true,
-		Secure:   options.Dev == "",
-		Expires:  time.Unix(expiresAt, 0),
-	}
-	w.Header().Set("Set-Cookie", cookie.String())
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
+	w.WriteHeader(303)
 }
 
 func displayEmail(w http.ResponseWriter, r *http.Request) {
@@ -920,17 +880,16 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 func serverRest() (*http.Server, <-chan bool, error) {
 	tokenExp = time.Second * time.Duration(options.ExpireAccess)
 	refreshExp = time.Second * time.Duration(options.ExpireRefresh)
-	codeExp = time.Second * time.Duration(options.ExpireRefresh)
+	codeExp = time.Second * time.Duration(options.ExpireCode)
 
 	router := mux.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
-		return handlers.CombinedLoggingHandler(os.Stdout, next)
+		return handlers.LoggingHandler(os.Stdout, next)
 	})
 
 	if options.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
 		router.HandleFunc("/signup", signup).Methods("POST")
-		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
 		router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
@@ -952,12 +911,19 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	}
 
 	if options.OauthEndpoints {
+		router.HandleFunc("/oauth/login", login).Methods("POST")
 		router.HandleFunc("/oauth/token", oauth).Methods("POST")
 		router.HandleFunc("/oauth/revoke", revoke).Methods("POST")
-		router.HandleFunc("/oauth/authorize", authorize).Methods("POST")
+		router.HandleFunc("/oauth/authorize", authorize).Methods("GET")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
 
+		router.HandleFunc("/authen/logout", logout).Methods("GET")
 	}
+
+	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("no route matched for: %v", r.URL)
+		w.WriteHeader(http.StatusNotFound)
+	})
 
 	s := &http.Server{
 		Addr:         ":" + strconv.Itoa(options.Port),
@@ -1065,12 +1031,15 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(role string, subject string) (string, error) {
+func encodeAccessToken(role string, subject string, scope string, audience string, issuer string) (string, error) {
 	tokenClaims := &TokenClaims{
-		Role: role,
+		Role:  role,
+		Scope: scope,
 		Claims: jwt.Claims{
-			Expiry:  jwt.NewNumericDate(time.Now().Add(tokenExp)),
-			Subject: subject,
+			Expiry:   jwt.NewNumericDate(time.Now().Add(tokenExp)),
+			Subject:  subject,
+			Audience: []string{audience},
+			Issuer:   issuer,
 		},
 	}
 	var sig jose.Signer

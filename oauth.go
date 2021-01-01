@@ -43,7 +43,13 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(refreshToken)
+		refreshClaims, err := checkRefreshToken(refreshToken)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+			return
+		}
+
+		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(refreshClaims.Subject, refreshClaims.Token)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
 			return
@@ -197,25 +203,20 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func refresh(token string) (string, string, int64, error) {
-	refreshClaims, err := checkRefreshToken(token)
+func refresh(email string, token string) (string, string, int64, error) {
+	result, err := dbSelect(email)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-02, could not parse claims %v", err)
-	}
-
-	result, err := dbSelect(refreshClaims.Subject)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", refreshClaims.Subject, err)
+		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", email, err)
 	}
 
 	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
-		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", refreshClaims.Subject, err)
+		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", email, err)
 	}
 
-	if result.refreshToken == nil || refreshClaims.Token != *result.refreshToken {
-		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", refreshClaims.Token, *result.refreshToken)
+	if result.refreshToken == nil || token != *result.refreshToken {
+		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", token, *result.refreshToken)
 	}
-	return encodeTokens(result, refreshClaims.Subject)
+	return encodeTokens(result, email)
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {

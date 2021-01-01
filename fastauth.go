@@ -561,18 +561,37 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	//return the code flow
-	encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
-		return
+	if cred.CodeCodeChallengeMethod != "" {
+		//return the code flow
+		encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
+			return
+		}
+		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
+		w.WriteHeader(303)
+	} else {
+		refreshToken, err := resetRefreshToken(*result.refreshToken)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+			return
+		}
+		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(cred.Email, refreshToken)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+			return
+		}
+
+		oauth := OAuth{AccessToken: encodedAccessToken, TokenType: "Bearer", RefreshToken: encodedRefreshToken, Expires: strconv.FormatInt(expiresAt, 10)}
+		oauthEnc, err := json.Marshal(oauth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-04, cannot verify refresh token %v", err)
+			return
+		}
+		w.Write(oauthEnc)
+		w.WriteHeader(http.StatusOK)
 	}
 
-	//encodedAccessToken, err := encodeAccessToken(string(result.role), "tom", options.Scope, options.Audience, options.Issuer)
-	//log.Printf("accesstokeen: [%v]\n", encodedAccessToken)
-
-	w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
-	w.WriteHeader(303)
 }
 
 func displayEmail(w http.ResponseWriter, r *http.Request) {

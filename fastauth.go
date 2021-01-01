@@ -589,7 +589,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Write(oauthEnc)
-		w.WriteHeader(http.StatusOK)
 	}
 
 }

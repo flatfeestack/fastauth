@@ -604,19 +604,19 @@ func login(w http.ResponseWriter, r *http.Request) {
 	} else {
 		refreshToken, err := resetRefreshToken(*result.refreshToken)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-15, cannot reset refresh token %v", err)
 			return
 		}
 		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(cred.Email, refreshToken)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-16, cannot verify refresh token %v", err)
 			return
 		}
 
 		oauth := OAuth{AccessToken: encodedAccessToken, TokenType: "Bearer", RefreshToken: encodedRefreshToken, Expires: strconv.FormatInt(expiresAt, 10)}
 		oauthEnc, err := json.Marshal(oauth)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-04, cannot verify refresh token %v", err)
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-17, cannot encode refresh token %v", err)
 			return
 		}
 		w.Write(oauthEnc)

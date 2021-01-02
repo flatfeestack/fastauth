@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserver"
@@ -60,6 +61,7 @@ const (
 )
 
 type Opts struct {
+	Env            string
 	Dev            string
 	Issuer         string
 	Port           int
@@ -83,7 +85,6 @@ type Opts struct {
 	OauthEndpoints bool
 	LdapServer     bool
 	DetailedError  bool
-	Limiter        bool
 	Redirects      string
 	PasswordFlow   bool
 	Scope          string
@@ -112,9 +113,8 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
-	flag.BoolVar(&opts.Limiter, "limiter", LookupEnv("LIMITER") != "", "Enable limiter, disabled in dev mode")
 	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
-	flag.StringVar(&opts.Redirects, "pwflow", LookupEnv("PWFLOW"), "enable password flow, default disabled")
+	flag.BoolVar(&opts.PasswordFlow, "pwflow", LookupEnv("PWFLOW") != "", "enable password flow, default disabled")
 	flag.StringVar(&opts.Scope, "scope", LookupEnv("SCOPE"), "scope, default in dev is my-scope")
 
 	flag.Usage = func() {
@@ -127,27 +127,40 @@ func NewOpts() *Opts {
 }
 
 func defaultOpts(opts *Opts) {
+	if opts.Env == "local" {
+		err := godotenv.Load()
+		if err != nil {
+			err = godotenv.Load("../.env")
+			if err != nil {
+				log.Printf("could not find env file in this or in the parent dir: %v", err)
+			}
+		}
+	}
 
-	opts.Port = setDefaultInt(opts.Port, 8080)
-	opts.Ldap = setDefaultInt(opts.Ldap, 8389)
-	opts.DBPath = setDefault(opts.DBPath, "./fastauth.db")
-	opts.DBDriver = "sqlite3"
-	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, 30*60)        //30min
-	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, 7*24*60*60) //7days
-	opts.ExpireCode = setDefaultInt(opts.ExpireCode, 60)               //1min
-	opts.ResetRefresh = false
-	opts.PasswordFlow = false
+	opts.Port = setDefaultInt(opts.Port, LookupEnvInt("PORT"), 8080)
+	opts.Ldap = setDefaultInt(opts.Ldap, LookupEnvInt("LDAP"), 8389)
+	opts.DBPath = setDefault(opts.DBPath, LookupEnv("DB_PATH"), "./fastauth.db")
+	opts.DBDriver = setDefault(opts.DBDriver, LookupEnv("DB_DRIVER"), "sqlite3")
+	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, LookupEnvInt("EXPIRE_ACCESS"), 30*60)         //30min
+	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, LookupEnvInt("EXPIRE_REFRESH"), 7*24*60*60) //7days
+	opts.ExpireCode = setDefaultInt(opts.ExpireCode, LookupEnvInt("EXPIRE_CODE"), 60)                  //1min
+	opts.ResetRefresh = setDefaultBool(opts.ResetRefresh, LookupEnv("RESET_REFRESH") != "", false)
+	opts.PasswordFlow = setDefaultBool(opts.PasswordFlow, LookupEnv("PWFLOW") != "", false)
+
+	opts.HS256 = setDefault(opts.HS256, LookupEnv("HS256"))
+	opts.RS256 = setDefault(opts.RS256, LookupEnv("RS256"))
+	opts.EdDSA = setDefault(opts.EdDSA, LookupEnv("EDDSA"))
 
 	if opts.Dev != "" {
-		opts.Scope = setDefault(opts.Scope, "my-scope")
-		opts.Audience = setDefault(opts.Audience, "my-audience")
-		opts.Issuer = setDefault(opts.Issuer, "my-issuer")
-		opts.UrlEmail = setDefault(opts.UrlEmail, "http://localhost:8080/send/email/{action}/{email}/{token}")
-		opts.UrlSMS = setDefault(opts.UrlSMS, "http://localhost:8080/send/sms/{sms}/{token}")
-		opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
-
+		opts.Scope = setDefault(opts.Scope, LookupEnv("SCOPE"), "my-scope")
+		opts.Audience = setDefault(opts.Audience, LookupEnv("AUDIENCE"), "my-audience")
+		opts.Issuer = setDefault(opts.Issuer, LookupEnv("ISSUER"), "my-issuer")
+		opts.UrlEmail = setDefault(opts.UrlEmail, LookupEnv("EMAIL_URL"), "http://localhost:8080/send/email/{action}/{email}/{token}")
+		opts.UrlSMS = setDefault(opts.UrlSMS, LookupEnv("SMS_URL"), "http://localhost:8080/send/sms/{sms}/{token}")
+		dev := setDefault(opts.Dev, LookupEnv("DEV"), opts.Dev)
+		opts.HS256 = base32.StdEncoding.EncodeToString([]byte(dev))
 		h := crc64.MakeTable(0xC96C5795D7870F42)
-		rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
+		rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))), 2048)
 		if err != nil {
 			log.Fatalf("cannot generate rsa key %v", err)
 		}
@@ -157,7 +170,7 @@ func defaultOpts(opts *Opts) {
 		}
 		opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
 
-		_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))))
+		_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))))
 		if err != nil {
 			log.Fatalf("cannot generate eddsa key %v", err)
 		}
@@ -167,11 +180,10 @@ func defaultOpts(opts *Opts) {
 		opts.UserEndpoints = true
 		opts.LdapServer = true
 		opts.DetailedError = true
-		opts.Limiter = false
 		opts.PasswordFlow = true
 
 		if opts.Users == "" {
-			opts.Users = "tom:123"
+			opts.Users = "user:pass"
 		}
 
 		log.Printf("DEV mode active, key is %v, hex(%v)", opts.Dev, opts.HS256)
@@ -227,18 +239,31 @@ func defaultOpts(opts *Opts) {
 	}
 }
 
-func setDefaultInt(actualValue int, defaultValue int) int {
-	if actualValue == 0 {
-		return defaultValue
+func setDefault(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
 	}
-	return actualValue
+	return ""
 }
 
-func setDefault(actualValue string, defaultValue string) string {
-	if actualValue == "" {
-		return defaultValue
+func setDefaultInt(values ...int) int {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
 	}
-	return actualValue
+	return 0
+}
+
+func setDefaultBool(values ...bool) bool {
+	for _, v := range values {
+		if v {
+			return v
+		}
+	}
+	return false
 }
 
 func LookupEnv(key string) string {
@@ -945,7 +970,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 
 	s := &http.Server{
 		Addr:         ":" + strconv.Itoa(options.Port),
-		Handler:      limit(router),
+		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}

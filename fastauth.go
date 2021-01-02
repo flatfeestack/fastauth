@@ -158,24 +158,28 @@ func defaultOpts(opts *Opts) {
 		opts.UrlEmail = setDefault(opts.UrlEmail, LookupEnv("EMAIL_URL"), "http://localhost:8080/send/email/{action}/{email}/{token}")
 		opts.UrlSMS = setDefault(opts.UrlSMS, LookupEnv("SMS_URL"), "http://localhost:8080/send/sms/{sms}/{token}")
 		dev := setDefault(opts.Dev, LookupEnv("DEV"), opts.Dev)
-		opts.HS256 = base32.StdEncoding.EncodeToString([]byte(dev))
+		if strings.ToLower(opts.HS256) != "false" {
+			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(dev))
+		}
 		h := crc64.MakeTable(0xC96C5795D7870F42)
-		rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))), 2048)
-		if err != nil {
-			log.Fatalf("cannot generate rsa key %v", err)
+		if strings.ToLower(opts.RS256) != "false" {
+			rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))), 2048)
+			if err != nil {
+				log.Fatalf("cannot generate rsa key %v", err)
+			}
+			encPrivRSA, err := x509.MarshalPKCS8PrivateKey(rsaPrivKey)
+			if err != nil {
+				log.Fatalf("cannot generate rsa key %v", err)
+			}
+			opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
 		}
-		encPrivRSA, err := x509.MarshalPKCS8PrivateKey(rsaPrivKey)
-		if err != nil {
-			log.Fatalf("cannot generate rsa key %v", err)
+		if strings.ToLower(opts.EdDSA) != "false" {
+			_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))))
+			if err != nil {
+				log.Fatalf("cannot generate eddsa key %v", err)
+			}
+			opts.EdDSA = base32.StdEncoding.EncodeToString(edPrivKey)
 		}
-		opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
-
-		_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))))
-		if err != nil {
-			log.Fatalf("cannot generate eddsa key %v", err)
-		}
-		opts.EdDSA = base32.StdEncoding.EncodeToString(edPrivKey)
-
 		opts.OauthEndpoints = true
 		opts.UserEndpoints = true
 		opts.LdapServer = true
@@ -191,13 +195,15 @@ func defaultOpts(opts *Opts) {
 		log.Printf("DEV mode active, eddsa is hex(%v)", opts.EdDSA)
 	}
 
-	if opts.HS256 == "" && opts.RS256 == "" && opts.EdDSA == "" {
+	if (opts.HS256 == "" || strings.ToLower(opts.HS256) == "false") &&
+		(opts.RS256 == "" || strings.ToLower(opts.RS256) == "false") &&
+		(opts.EdDSA == "" || strings.ToLower(opts.EdDSA) == "false") {
 		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory.\n")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	if opts.HS256 != "" {
+	if opts.HS256 != "" && strings.ToLower(opts.HS256) != "false" {
 		var err error
 		jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
 		if err != nil {
@@ -205,7 +211,7 @@ func defaultOpts(opts *Opts) {
 		}
 	}
 
-	if opts.RS256 != "" {
+	if opts.RS256 != "" && strings.ToLower(opts.RS256) != "false" {
 		rsaDec, err := base32.StdEncoding.DecodeString(opts.RS256)
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.RS256)
@@ -223,7 +229,7 @@ func defaultOpts(opts *Opts) {
 		privRSAKid = hex.EncodeToString(kid)
 	}
 
-	if opts.EdDSA != "" {
+	if opts.EdDSA != "" && strings.ToLower(opts.EdDSA) != "false" {
 		eddsa, err := base32.StdEncoding.DecodeString(opts.EdDSA)
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.EdDSA)

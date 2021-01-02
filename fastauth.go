@@ -195,15 +195,23 @@ func defaultOpts(opts *Opts) {
 		log.Printf("DEV mode active, eddsa is hex(%v)", opts.EdDSA)
 	}
 
-	if (opts.HS256 == "" || strings.ToLower(opts.HS256) == "false") &&
-		(opts.RS256 == "" || strings.ToLower(opts.RS256) == "false") &&
-		(opts.EdDSA == "" || strings.ToLower(opts.EdDSA) == "false") {
+	if strings.ToLower(opts.HS256) == "false" {
+		opts.HS256 = ""
+	}
+	if strings.ToLower(opts.RS256) == "false" {
+		opts.RS256 = ""
+	}
+	if strings.ToLower(opts.EdDSA) == "false" {
+		opts.EdDSA = ""
+	}
+
+	if opts.HS256 == "" && opts.RS256 == "" && opts.EdDSA == "" {
 		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory.\n")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	if opts.HS256 != "" && strings.ToLower(opts.HS256) != "false" {
+	if opts.HS256 != "" {
 		var err error
 		jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
 		if err != nil {
@@ -211,7 +219,7 @@ func defaultOpts(opts *Opts) {
 		}
 	}
 
-	if opts.RS256 != "" && strings.ToLower(opts.RS256) != "false" {
+	if opts.RS256 != "" {
 		rsaDec, err := base32.StdEncoding.DecodeString(opts.RS256)
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.RS256)
@@ -229,7 +237,7 @@ func defaultOpts(opts *Opts) {
 		privRSAKid = hex.EncodeToString(kid)
 	}
 
-	if opts.EdDSA != "" && strings.ToLower(opts.EdDSA) != "false" {
+	if opts.EdDSA != "" {
 		eddsa, err := base32.StdEncoding.DecodeString(opts.EdDSA)
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.EdDSA)

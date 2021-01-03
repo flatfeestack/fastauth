@@ -615,7 +615,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-15, cannot reset refresh token %v", err)
 			return
 		}
-		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(cred.Email, refreshToken)
+		encodedAccessToken, encodedRefreshToken, expiresAt, err := checkRefresh(cred.Email, refreshToken)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-16, cannot verify refresh token %v", err)
 			return
@@ -946,6 +946,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 
 	if options.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
+		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/signup", signup).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")

@@ -21,6 +21,38 @@ type OAuth struct {
 	Expires      string `json:"expires_in"`
 }
 
+func refresh(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := param("refresh_token", r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+		return
+	}
+	if refreshToken == "" {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-02, no refresh token")
+		return
+	}
+
+	refreshClaims, err := checkRefreshToken(refreshToken)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+		return
+	}
+
+	encodedAccessToken, encodedRefreshToken, expiresAt, err := checkRefresh(refreshClaims.Subject, refreshClaims.Token)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
+		return
+	}
+
+	oauth := OAuth{AccessToken: encodedAccessToken, TokenType: "Bearer", RefreshToken: encodedRefreshToken, Expires: strconv.FormatInt(expiresAt, 10)}
+	oauthEnc, err := json.Marshal(oauth)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-04, cannot verify refresh token %v", err)
+		return
+	}
+	w.Write(oauthEnc)
+}
+
 func oauth(w http.ResponseWriter, r *http.Request) {
 	grantType, err := param("grant_type", r)
 	if err != nil {
@@ -33,35 +65,7 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
 			return
 		}
-		refreshToken, err := param("refresh_token", r)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
-			return
-		}
-		if refreshToken == "" {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-02, no refresh token")
-			return
-		}
-
-		refreshClaims, err := checkRefreshToken(refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
-			return
-		}
-
-		encodedAccessToken, encodedRefreshToken, expiresAt, err := refresh(refreshClaims.Subject, refreshClaims.Token)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-03, cannot verify refresh token %v", err)
-			return
-		}
-
-		oauth := OAuth{AccessToken: encodedAccessToken, TokenType: "Bearer", RefreshToken: encodedRefreshToken, Expires: strconv.FormatInt(expiresAt, 10)}
-		oauthEnc, err := json.Marshal(oauth)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-04, cannot verify refresh token %v", err)
-			return
-		}
-		w.Write(oauthEnc)
+		refresh(w, r)
 		return
 
 	} else if grantType == "authorization_code" {
@@ -203,7 +207,7 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func refresh(email string, token string) (string, string, int64, error) {
+func checkRefresh(email string, token string) (string, string, int64, error) {
 	result, err := dbSelect(email)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", email, err)

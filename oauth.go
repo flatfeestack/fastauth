@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,14 @@ type OAuth struct {
 }
 
 func refresh(w http.ResponseWriter, r *http.Request) {
-	refreshToken, err := param("refresh_token", r)
+	contentType := r.Header.Get("Content-type")
+	var refreshToken string
+	var err error
+	if strings.Index(contentType, "application/json") >=0 {
+		refreshToken, err = paramJson("refresh_token", r)
+	} else {
+		refreshToken, err = param("refresh_token", r)
+	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
 		return
@@ -364,4 +372,18 @@ func param(name string, r *http.Request) (string, error) {
 		return n2, nil
 	}
 	return n1, nil
+}
+
+func paramJson(name string, r *http.Request) (string, error) {
+	var objmap map[string]json.RawMessage
+	err := json.NewDecoder(r.Body).Decode(&objmap)
+	if err != nil {
+		return "", err
+	}
+	var s string
+	err = json.Unmarshal(objmap[name], &s)
+	if err != nil {
+		return "", err
+	}
+	return s, nil
 }

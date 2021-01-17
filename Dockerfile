@@ -7,7 +7,7 @@ RUN chown -R appuser:appgroup /app
 USER appuser
 RUN make
 
-FROM alpine:3.12
+FROM alpine:3.13
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
 COPY --from=builder /app/login.html /app/banner.txt /app/fastauth /app/startup.sql ./

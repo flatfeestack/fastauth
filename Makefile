@@ -1,20 +1,12 @@
-#Execute the following commands:
-# 'make' and it will create the binary
-# 'make clean' ant it will remove the binary
-NAME:=fastauth
-
-.PHONY: all test build clean dep
+.PHONY: all dep build test clean
 
 all: dep build test
-test:
-	go test ./... -v
+
+dep:
+	go mod download
 build:
-	go build -o $(NAME)
-dep: go.mod
-	go mod tidy
-	go get -v -u ./...
+	go build
+test:
+	go test
 clean:
 	go clean
-	rm -f $(NAME)
-go.mod:
-	go mod init $(NAME)

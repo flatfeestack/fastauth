@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"github.com/stretchr/testify/assert"
 	"github.com/xlzd/gotp"
 	"io/ioutil"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +31,12 @@ const (
 curl -v "http://localhost:8080/signup"   -X POST   -d "{\"email\":\"tom\",\"password\":\"test\"}"   -H "Content-Type: application/json"
 */
 func TestSignup(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -39,7 +46,12 @@ func TestSignup(t *testing.T) {
 }
 
 func TestSignupWrongEmail(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doSignup("tomtest.ch", "testtest")
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -52,7 +64,12 @@ func TestSignupWrongEmail(t *testing.T) {
 }
 
 func TestSignupTwice(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	resp.Body.Close()
 	resp = doSignup("tom@test.ch", "testtest")
@@ -68,7 +85,12 @@ func TestSignupTwice(t *testing.T) {
 }
 
 func TestSignupWrong(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	resp = doSignup("tom@test.ch", "testtest")
 
@@ -84,7 +106,12 @@ func TestSignupWrong(t *testing.T) {
 }
 
 func TestConfirm(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -97,7 +124,12 @@ func TestConfirm(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -113,7 +145,12 @@ func TestLogin(t *testing.T) {
 }
 
 func TestLoginFalse(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -135,7 +172,13 @@ func TestLoginFalse(t *testing.T) {
 }
 
 func TestRefresh(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 10})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true",
+		"-expire-refresh=10")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	oauth := OAuth{}
@@ -145,7 +188,13 @@ func TestRefresh(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true",
+		"-expire-refresh=1")
 
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -166,8 +215,13 @@ func TestReset(t *testing.T) {
 }
 
 func TestResetFailed(t *testing.T) {
-	shutdown := mainTest(&Opts{Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true", ExpireRefresh: 1})
-
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true",
+		"-expire-refresh=1")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -187,7 +241,12 @@ func TestResetFailed(t *testing.T) {
 }
 
 func TestTOTP(t *testing.T) {
-	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	oauth := OAuth{}
@@ -210,7 +269,12 @@ func TestTOTP(t *testing.T) {
 }
 
 func TestLoginTOTP(t *testing.T) {
-	shutdown := mainTest(&Opts{Issuer: "FFFS", Port: testPort, DBPath: testDBPath, UrlEmail: testUrl + "/send/email/{action}/{email}/{token}", Dev: "true"})
+	shutdown := mainTest(
+		"-issuer=FFFS",
+		"-port="+strconv.Itoa(testPort),
+		"-db-path="+testDBPath,
+		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-dev=true")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -400,9 +464,12 @@ func TestGetAttrDN(t *testing.T) {
 		getAttrDN("cn=tom,ou=P_Internal,ou=P_Users,dc=test,dc=ch", "CN"))
 }
 
-func mainTest(opts *Opts) func() {
-	defaultOpts(opts)
-	options = opts
+func mainTest(args ...string) func() {
+	oldArgs := os.Args
+	os.Args = []string{oldArgs[0]}
+	os.Args = append(os.Args, args...)
+
+	opts = NewOpts()
 	var err error
 	db, err = initDB()
 	if err != nil {
@@ -416,6 +483,8 @@ func mainTest(opts *Opts) func() {
 	serverLdap, doneChannelLdap := serverLdap()
 
 	return func() {
+		os.Args = oldArgs
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		serverRest.Shutdown(context.Background())
 		serverLdap.Stop()
 		if serverLdap.Listener != nil {
@@ -428,7 +497,7 @@ func mainTest(opts *Opts) func() {
 			log.Printf("could not close DB %v", err)
 		}
 		//for testing, the DB needs to be wiped after each run
-		err = os.Remove(options.DBPath)
+		err = os.Remove(opts.DBPath)
 		if err != nil {
 			log.Printf("could not remove DB file %v", err)
 		}

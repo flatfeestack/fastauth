@@ -1,3 +1,4 @@
 fastauth
 .idea
 *.db
+.env

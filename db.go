@@ -202,7 +202,7 @@ func addInitialUserWithRole(username string, password string, role string) error
 }
 
 func initDB() (*sql.DB, error) {
-	db, err := sql.Open(options.DBDriver, options.DBPath)
+	db, err := sql.Open(opts.DBDriver, opts.DBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -231,9 +231,9 @@ func initDB() (*sql.DB, error) {
 }
 
 func setupDB() {
-	if options.Users != "" {
+	if opts.Users != "" {
 		//add user for development
-		users := strings.Split(options.Users, ";")
+		users := strings.Split(opts.Users, ";")
 		for _, user := range users {
 			userPwRole := strings.Split(user, ":")
 			if len(userPwRole) == 2 {

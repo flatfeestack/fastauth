@@ -16,7 +16,7 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	_, errString, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
 	if err != nil {
 		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
-		if options.DetailedError {
+		if opts.DetailedError {
 			res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v, %v", string(r.Name()), errString))
 		}
 		w.Write(res)

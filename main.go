@@ -17,7 +17,6 @@ import (
 	"github.com/dimiro1/banner"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
-	"github.com/gorilla/schema"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
@@ -28,7 +27,6 @@ import (
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"hash/crc64"
-	"io/ioutil"
 	"log"
 	rnd "math/rand"
 	"net"
@@ -44,7 +42,7 @@ import (
 )
 
 var (
-	options      *Opts
+	opts         *Opts
 	jwtKey       []byte
 	privRSA      *rsa.PrivateKey
 	privRSAKid   string
@@ -56,9 +54,51 @@ var (
 	codeExp      time.Duration
 )
 
-const (
-	version = "1.0.0"
-)
+type Credentials struct {
+	Email    string `json:"email,omitempty" schema:"email"`
+	Password string `json:"password" schema:"password,required"`
+	TOTP     string `json:"totp,omitempty" schema:"totp"`
+	//here comes oauth, leave empty on regular login
+	//If you want to use oauth, you need to configure
+	//client-id with a matching redirect-uri from the
+	//command line
+	ClientId                string `json:"client_id,omitempty" schema:"client_id"`
+	ResponseType            string `json:"response_type,omitempty" schema:"response_type"`
+	State                   string `json:"state,omitempty" schema:"state"`
+	Scope                   string `json:"scope" schema:"scope"`
+	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
+	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
+}
+
+type TokenClaims struct {
+	Role     string `json:"role,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+	jwt.Claims
+}
+type RefreshClaims struct {
+	ExpiresAt int64  `json:"exp,omitempty"`
+	Subject   string `json:"role,omitempty"`
+	Token     string `json:"token,omitempty"`
+}
+type CodeClaims struct {
+	ExpiresAt               int64  `json:"exp,omitempty"`
+	Subject                 string `json:"role,omitempty"`
+	CodeChallenge           string `json:"code_challenge,omitempty"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
+}
+
+type ProvisioningUri struct {
+	Uri string `json:"uri"`
+}
+
+type OAuth struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
+	Expires      string `json:"expires_in"`
+}
 
 type Opts struct {
 	Env            string
@@ -91,31 +131,43 @@ type Opts struct {
 }
 
 func NewOpts() *Opts {
+	err := godotenv.Load()
+	if err != nil {
+		log.Printf("Could not find env file [%v], using defaults", err)
+	}
+
 	opts := &Opts{}
-	flag.StringVar(&opts.Dev, "dev", LookupEnv("DEV"), "Dev settings with initial secret")
-	flag.StringVar(&opts.Issuer, "issuer", LookupEnv("ISSUER"), "name of issuer, default in dev is my-issuer")
-	flag.IntVar(&opts.Port, "port", LookupEnvInt("PORT"), "listening HTTP port")
-	flag.IntVar(&opts.Ldap, "ldap", LookupEnvInt("LDAP"), "listening LDAP port")
-	flag.StringVar(&opts.DBPath, "db-path", LookupEnv("DB_PATH"), "DB path")
-	flag.StringVar(&opts.DBDriver, "db-driver", LookupEnv("DB_DRIVER"), "DB driver")
-	flag.StringVar(&opts.UrlEmail, "email-url", LookupEnv("EMAIL_URL"), "Email service URL")
-	flag.StringVar(&opts.UrlSMS, "sms-url", LookupEnv("SMS_URL"), "SMS service URL")
-	flag.StringVar(&opts.Audience, "audience", LookupEnv("AUDIENCE"), "Audience, default in dev is my-audience")
-	flag.IntVar(&opts.ExpireAccess, "expire-access", LookupEnvInt("EXPIRE_ACCESS"), "Access token expiration in seconds")
-	flag.IntVar(&opts.ExpireRefresh, "expire-refresh", LookupEnvInt("EXPIRE_REFRESH"), "Refresh token expiration in seconds")
-	flag.IntVar(&opts.ExpireCode, "expire-code", LookupEnvInt("EXPIRE_CODE"), "Authtoken flow expiration in seconds")
-	flag.StringVar(&opts.HS256, "hs256", LookupEnv("HS256"), "HS256 key")
-	flag.StringVar(&opts.RS256, "rs256", LookupEnv("RS256"), "RS256 key")
-	flag.StringVar(&opts.EdDSA, "eddsa", LookupEnv("EDDSA"), "EdDSA key")
-	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", LookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
-	flag.StringVar(&opts.Users, "users", LookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
-	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", LookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
-	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", LookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
-	flag.BoolVar(&opts.LdapServer, "ldap-server", LookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
-	flag.BoolVar(&opts.DetailedError, "details", LookupEnv("DETAILS") != "", "Enable detailed errors")
-	flag.StringVar(&opts.Redirects, "redir", LookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
-	flag.BoolVar(&opts.PasswordFlow, "pwflow", LookupEnv("PWFLOW") != "", "enable password flow, default disabled")
-	flag.StringVar(&opts.Scope, "scope", LookupEnv("SCOPE"), "scope, default in dev is my-scope")
+	flag.StringVar(&opts.Dev, "dev", lookupEnv("DEV"), "Dev settings with initial secret")
+	flag.StringVar(&opts.Issuer, "issuer", lookupEnv("ISSUER"), "name of issuer, default in dev is my-issuer")
+	flag.IntVar(&opts.Port, "port", lookupEnvInt("PORT",
+		8080), "listening HTTP port")
+	flag.IntVar(&opts.Ldap, "ldap", lookupEnvInt("LDAP",
+		8389), "listening LDAP port")
+	flag.StringVar(&opts.DBPath, "db-path", lookupEnv("DB_PATH",
+		"./fastauth.db"), "DB path")
+	flag.StringVar(&opts.DBDriver, "db-driver", lookupEnv("DB_DRIVER",
+		"sqlite3"), "DB driver")
+	flag.StringVar(&opts.UrlEmail, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
+	flag.StringVar(&opts.UrlSMS, "sms-url", lookupEnv("SMS_URL"), "SMS service URL")
+	flag.StringVar(&opts.Audience, "audience", lookupEnv("AUDIENCE"), "Audience, default in dev is my-audience")
+	flag.IntVar(&opts.ExpireAccess, "expire-access", lookupEnvInt("EXPIRE_ACCESS",
+		30*60), "Access token expiration in seconds, default 30min")
+	flag.IntVar(&opts.ExpireRefresh, "expire-refresh", lookupEnvInt("EXPIRE_REFRESH",
+		180*24*60*60), "Refresh token expiration in seconds, default 6month")
+	flag.IntVar(&opts.ExpireCode, "expire-code", lookupEnvInt("EXPIRE_CODE",
+		60), "Authtoken flow expiration in seconds, default 1min")
+	flag.StringVar(&opts.HS256, "hs256", lookupEnv("HS256"), "HS256 key")
+	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key")
+	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
+	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", lookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
+	flag.StringVar(&opts.Users, "users", lookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
+	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", lookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
+	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", lookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
+	flag.BoolVar(&opts.LdapServer, "ldap-server", lookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
+	flag.BoolVar(&opts.DetailedError, "details", lookupEnv("DETAILS") != "", "Enable detailed errors")
+	flag.StringVar(&opts.Redirects, "redir", lookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
+	flag.BoolVar(&opts.PasswordFlow, "pwflow", lookupEnv("PWFLOW") != "", "enable password flow, default disabled")
+	flag.StringVar(&opts.Scope, "scope", lookupEnv("SCOPE"), "scope, default in dev is my-scope")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -123,47 +175,31 @@ func NewOpts() *Opts {
 	}
 
 	flag.Parse()
-	return opts
-}
 
-func defaultOpts(opts *Opts) {
-	if opts.Env == "local" {
-		err := godotenv.Load()
-		if err != nil {
-			err = godotenv.Load("../.env")
-			if err != nil {
-				log.Printf("could not find env file in this or in the parent dir: %v", err)
-			}
-		}
-	}
-
-	opts.Port = setDefaultInt(opts.Port, LookupEnvInt("PORT"), 8080)
-	opts.Ldap = setDefaultInt(opts.Ldap, LookupEnvInt("LDAP"), 8389)
-	opts.DBPath = setDefault(opts.DBPath, LookupEnv("DB_PATH"), "./fastauth.db")
-	opts.DBDriver = setDefault(opts.DBDriver, LookupEnv("DB_DRIVER"), "sqlite3")
-	opts.ExpireAccess = setDefaultInt(opts.ExpireAccess, LookupEnvInt("EXPIRE_ACCESS"), 30*60)         //30min
-	opts.ExpireRefresh = setDefaultInt(opts.ExpireRefresh, LookupEnvInt("EXPIRE_REFRESH"), 7*24*60*60) //7days
-	opts.ExpireCode = setDefaultInt(opts.ExpireCode, LookupEnvInt("EXPIRE_CODE"), 60)                  //1min
-	opts.ResetRefresh = setDefaultBool(opts.ResetRefresh, LookupEnv("RESET_REFRESH") != "", false)
-	opts.PasswordFlow = setDefaultBool(opts.PasswordFlow, LookupEnv("PWFLOW") != "", false)
-
-	opts.HS256 = setDefault(opts.HS256, LookupEnv("HS256"))
-	opts.RS256 = setDefault(opts.RS256, LookupEnv("RS256"))
-	opts.EdDSA = setDefault(opts.EdDSA, LookupEnv("EDDSA"))
-
+	//set defaults
 	if opts.Dev != "" {
-		opts.Scope = setDefault(opts.Scope, LookupEnv("SCOPE"), "my-scope")
-		opts.Audience = setDefault(opts.Audience, LookupEnv("AUDIENCE"), "my-audience")
-		opts.Issuer = setDefault(opts.Issuer, LookupEnv("ISSUER"), "my-issuer")
-		opts.UrlEmail = setDefault(opts.UrlEmail, LookupEnv("EMAIL_URL"), "http://localhost:8080/send/email/{action}/{email}/{token}")
-		opts.UrlSMS = setDefault(opts.UrlSMS, LookupEnv("SMS_URL"), "http://localhost:8080/send/sms/{sms}/{token}")
-		dev := setDefault(opts.Dev, LookupEnv("DEV"), opts.Dev)
+		if opts.Scope == "" {
+			opts.Scope = "my-scope"
+		}
+		if opts.Audience == "" {
+			opts.Audience = "my-audience"
+		}
+		if opts.Issuer == "" {
+			opts.Issuer = "my-issuer"
+		}
+		if opts.UrlEmail == "" {
+			opts.UrlEmail = "http://localhost:8080/send/email/{action}/{email}/{token}"
+		}
+		if opts.UrlSMS == "" {
+			opts.UrlSMS = "http://localhost:8080/send/sms/{sms}/{token}"
+		}
+
 		if strings.ToLower(opts.HS256) != "false" {
-			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(dev))
+			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
 		}
 		h := crc64.MakeTable(0xC96C5795D7870F42)
 		if strings.ToLower(opts.RS256) != "false" {
-			rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))), 2048)
+			rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
 			if err != nil {
 				log.Fatalf("cannot generate rsa key %v", err)
 			}
@@ -174,7 +210,7 @@ func defaultOpts(opts *Opts) {
 			opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
 		}
 		if strings.ToLower(opts.EdDSA) != "false" {
-			_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(dev), h)))))
+			_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))))
 			if err != nil {
 				log.Fatalf("cannot generate eddsa key %v", err)
 			}
@@ -251,10 +287,14 @@ func defaultOpts(opts *Opts) {
 		}
 		privEdDSAKid = hex.EncodeToString(kid)
 	}
+	return opts
 }
 
-func setDefault(values ...string) string {
-	for _, v := range values {
+func lookupEnv(key string, defaultValues ...string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	for _, v := range defaultValues {
 		if v != "" {
 			return v
 		}
@@ -262,88 +302,21 @@ func setDefault(values ...string) string {
 	return ""
 }
 
-func setDefaultInt(values ...int) int {
-	for _, v := range values {
+func lookupEnvInt(key string, defaultValues ...int) int {
+	if val, ok := os.LookupEnv(key); ok {
+		v, err := strconv.Atoi(val)
+		if err != nil {
+			log.Printf("LookupEnvInt[%s]: %v", key, err)
+			return 0
+		}
+		return v
+	}
+	for _, v := range defaultValues {
 		if v != 0 {
 			return v
 		}
 	}
 	return 0
-}
-
-func setDefaultBool(values ...bool) bool {
-	for _, v := range values {
-		if v {
-			return v
-		}
-	}
-	return false
-}
-
-func LookupEnv(key string) string {
-	if val, ok := os.LookupEnv(key); ok {
-		return val
-	}
-	return ""
-}
-
-func LookupEnvInt(key string) int {
-	if val, ok := os.LookupEnv(key); ok {
-		v, err := strconv.Atoi(val)
-		if err != nil {
-			log.Printf("LookupEnvOrInt[%s]: %v", key, err)
-			return 0
-		}
-		return v
-	}
-	return 0
-}
-
-type Credentials struct {
-	Email    string `json:"email,omitempty" schema:"email"`
-	Password string `json:"password" schema:"password,required"`
-	TOTP     string `json:"totp,omitempty" schema:"totp"`
-	//here comes oauth, leave empty on regular login
-	//If you want to use oauth, you need to configure
-	//client-id with a matching redirect-uri from the
-	//command line
-	ClientId                string `json:"client_id,omitempty" schema:"client_id"`
-	ResponseType            string `json:"response_type,omitempty" schema:"response_type"`
-	State                   string `json:"state,omitempty" schema:"state"`
-	Scope                   string `json:"scope" schema:"scope"`
-	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
-	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
-	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
-}
-
-type TokenClaims struct {
-	Role     string `json:"role,omitempty"`
-	Scope    string `json:"scope,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
-	jwt.Claims
-}
-type RefreshClaims struct {
-	ExpiresAt int64  `json:"exp,omitempty"`
-	Subject   string `json:"role,omitempty"`
-	Token     string `json:"token,omitempty"`
-}
-type CodeClaims struct {
-	ExpiresAt               int64  `json:"exp,omitempty"`
-	Subject                 string `json:"role,omitempty"`
-	CodeChallenge           string `json:"code_challenge,omitempty"`
-	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
-}
-
-type ProvisioningUri struct {
-	Uri string `json:"uri"`
-}
-
-func (r *RefreshClaims) Valid() error {
-	now := time.Now().Unix()
-	if r.ExpiresAt < now {
-		return fmt.Errorf("expired by %vs", now-r.ExpiresAt)
-	}
-	return nil
 }
 
 func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClaims)) func(http.ResponseWriter, *http.Request) {
@@ -425,82 +398,6 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 	return refreshClaims, nil
 }
 
-func confirmEmail(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	token := vars["token"]
-	email := vars["email"]
-
-	err := updateEmailToken(email, token)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", email, token, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func signup(w http.ResponseWriter, r *http.Request) {
-	var cred Credentials
-	err := json.NewDecoder(r.Body).Decode(&cred)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
-		return
-	}
-
-	err = validateEmail(cred.Email)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-02, email is wrong %v", err)
-		return
-	}
-
-	err = validatePassword(cred.Password)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-03, password is wrong %v", err)
-		return
-	}
-
-	rnd, err := genRnd(48)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-04, RND %v err %v", cred.Email, err)
-		return
-	}
-	emailToken := base32.StdEncoding.EncodeToString(rnd[0:16])
-
-	//https://security.stackexchange.com/questions/11221/how-big-should-salt-be
-
-	salt := rnd[16:32]
-	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
-		return
-	}
-
-	refreshToken := base32.StdEncoding.EncodeToString(rnd[32:48])
-
-	err = insertUser(salt, cred.Email, dk, "USR", emailToken, refreshToken)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-06, insert user failed: %v", err)
-		return
-	}
-
-	url := strings.Replace(options.UrlEmail, "{email}", url.QueryEscape(cred.Email), 1)
-	url = strings.Replace(url, "{token}", emailToken, 1)
-	url = strings.Replace(url, "{action}", "signup", 1)
-
-	err = sendEmail(url)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, send email failed: %v", url)
-		return
-	}
-
-	err = updateMailStatus(cred.Email)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-08, db update failed: %v", err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
 func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 	result, err := dbSelect(email)
 	if err != nil {
@@ -534,382 +431,6 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 	return result, "", nil
 }
 
-func login(w http.ResponseWriter, r *http.Request) {
-	var cred Credentials
-
-	//https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
-	var bodyCopy []byte
-	var err error
-	if r.Body != nil {
-		bodyCopy, err = ioutil.ReadAll(r.Body)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
-			return
-		}
-	}
-
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
-	err = json.NewDecoder(r.Body).Decode(&cred)
-	if err != nil {
-		r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
-		err = r.ParseForm()
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
-			return
-		}
-		err = schema.NewDecoder().Decode(&cred, r.PostForm)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-02, cannot populate POST data %v", err)
-			return
-		}
-	}
-
-	result, errString, err := checkEmailPassword(cred.Email, cred.Password)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_client", errString, "ERR-login-02 %v", err)
-		return
-	}
-
-	//SMS logic
-	if result.totp != nil && result.sms != nil && result.smsVerified != nil {
-		totp := newTOTP(*result.totp)
-		token := totp.Now()
-		if cred.TOTP == "" {
-			url := strings.Replace(options.UrlSMS, "{sms}", *result.sms, 1)
-			url = strings.Replace(url, "{token}", token, 1)
-			err = sendSMS(url)
-			if err != nil {
-				writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-login-07, send sms failed %v error: %v", cred.Email, err)
-				return
-			}
-			writeErr(w, http.StatusTeapot, "invalid_client", "blocked", "ERR-login-08, waiting for sms verification: %v", cred.Email)
-			return
-		} else if token != cred.TOTP {
-			writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-login-09, sms wrong token, %v err %v", cred.Email, err)
-			return
-		}
-	}
-
-	//TOTP logic
-	if result.totp != nil && result.totpVerified != nil {
-		totp := newTOTP(*result.totp)
-		token := totp.Now()
-		if token != cred.TOTP {
-			writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-login-10, totp wrong token, %v err %v", cred.Email, err)
-			return
-		}
-	}
-
-	if cred.CodeCodeChallengeMethod != "" {
-		//return the code flow
-		encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
-			return
-		}
-		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
-		w.WriteHeader(303)
-	} else {
-		refreshToken, err := resetRefreshToken(*result.refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-15, cannot reset refresh token %v", err)
-			return
-		}
-		encodedAccessToken, encodedRefreshToken, expiresAt, err := checkRefresh(cred.Email, refreshToken)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-16, cannot verify refresh token %v", err)
-			return
-		}
-
-		oauth := OAuth{AccessToken: encodedAccessToken, TokenType: "Bearer", RefreshToken: encodedRefreshToken, Expires: strconv.FormatInt(expiresAt, 10)}
-		oauthEnc, err := json.Marshal(oauth)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-17, cannot encode refresh token %v", err)
-			return
-		}
-		w.Write(oauthEnc)
-	}
-
-}
-
-func displayEmail(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	token := vars["token"]
-	email, err := url.QueryUnescape(vars["email"])
-	if err != nil {
-		email = fmt.Sprintf("email decoding error %v", err)
-		log.Printf(email)
-	}
-	action, err := url.QueryUnescape(vars["action"])
-	if err != nil {
-		action = fmt.Sprintf("action decoding error %v", err)
-		log.Printf(action)
-	}
-
-	if action == "signup" {
-		fmt.Printf("go to URL: http://%s/confirm/signup/%s/%s\n", r.Host, email, token)
-	} else if action == "reset" {
-		fmt.Printf("go to URL: http://%s/confirm/reset/%s/%s\n", r.Host, email, token)
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func displaySMS(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	token := vars["token"]
-	sms, err := url.QueryUnescape(vars["sms"])
-	if err != nil {
-		log.Printf("decoding error %v", err)
-	}
-	fmt.Printf("Sent to NR %s token [%s]\n", sms, token)
-}
-
-func resetEmail(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	email, err := url.QueryUnescape(vars["email"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-01, query unescape email %v err: %v", vars["email"], err)
-		return
-	}
-
-	rnd, err := genRnd(16)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-02, RND %v err %v", email, err)
-		return
-	}
-	forgetEmailToken := base32.StdEncoding.EncodeToString(rnd)
-
-	err = updateEmailForgotToken(email, forgetEmailToken)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
-		return
-	}
-
-	url := strings.Replace(options.UrlEmail, "{email}", email, 1)
-	url = strings.Replace(url, "{token}", forgetEmailToken, 1)
-	url = strings.Replace(url, "{action}", "reset", 1)
-
-	err = sendEmail(url)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-04, send email failed: %v", url)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func confirmReset(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	email, err := url.QueryUnescape(vars["email"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
-		return
-	}
-
-	token, err := url.QueryUnescape(vars["token"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-02, query unescape token %v err: %v", vars["token"], err)
-		return
-	}
-
-	var cred Credentials
-	err = json.NewDecoder(r.Body).Decode(&cred)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-03, cannot parse JSON credentials %v", err)
-		return
-	}
-
-	err = validatePassword(cred.Password)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-04, password is wrong %v", err)
-		return
-	}
-
-	salt, err := genRnd(16)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-05, RND %v err %v", email, err)
-		return
-	}
-
-	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-confirm-reset-email-06, key %v error: %v", cred.Email, err)
-		return
-	}
-
-	err = resetPassword(salt, email, dk, token)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
-	rnd, err := genRnd(20)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-setup-totp-01, RND %v err %v", claims.Subject, err)
-		return
-	}
-
-	secret := base32.StdEncoding.EncodeToString(rnd)
-	err = updateTOTP(claims.Subject, secret)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-setup-totp-02, update failed %v err %v", claims.Subject, err)
-		return
-	}
-
-	totp := newTOTP(secret)
-	p := ProvisioningUri{}
-	p.Uri = totp.ProvisioningUri(claims.Subject, options.Issuer)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(p)
-}
-
-func confirmTOTP(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
-	vars := mux.Vars(r)
-	token, err := url.QueryUnescape(vars["token"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-01, query unescape token %v err: %v", vars["token"], err)
-		return
-	}
-
-	result, err := dbSelect(claims.Subject)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-02, DB select, %v err %v", claims.Subject, err)
-		return
-	}
-
-	totp := newTOTP(*result.totp)
-	if token != totp.Now() {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-03, token different, %v err %v", claims.Subject, err)
-		return
-	}
-	err = updateTOTPVerified(claims.Subject)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-04, DB select, %v err %v", claims.Subject, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
-	vars := mux.Vars(r)
-	sms, err := url.QueryUnescape(vars["sms"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-setup-sms-01, query unescape sms %v err: %v", vars["sms"], err)
-		return
-	}
-
-	rnd, err := genRnd(20)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-setup-sms-02, RND %v err %v", claims.Subject, err)
-		return
-	}
-	secret := base32.StdEncoding.EncodeToString(rnd)
-	err = updateSMS(claims.Subject, secret, sms)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-setup-sms-03, updateSMS failed %v err %v", claims.Subject, err)
-		return
-	}
-
-	totp := newTOTP(secret)
-
-	url := strings.Replace(options.UrlSMS, "{sms}", sms, 1)
-	url = strings.Replace(url, "{token}", totp.Now(), 1)
-
-	err = sendSMS(url)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-setup-sms-04, send SMS failed %v err %v", claims.Subject, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func confirmSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
-	vars := mux.Vars(r)
-	token, err := url.QueryUnescape(vars["token"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-sms-01, query unescape token %v err: %v", vars["token"], err)
-		return
-	}
-
-	result, err := dbSelect(claims.Subject)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-sms-02, DB select, %v err %v", claims.Subject, err)
-		return
-	}
-
-	totp := newTOTP(*result.totp)
-	if token != totp.Now() {
-		writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-confirm-sms-03, token different, %v err %v", claims.Subject, err)
-		return
-	}
-	err = updateSMSVerified(claims.Subject)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-sms-04, update sms failed, %v err %v", claims.Subject, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func readiness(w http.ResponseWriter, _ *http.Request) {
-	err := db.Ping()
-	if err != nil {
-		log.Printf(fmt.Sprintf("not ready: %v", err))
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func liveness(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"version":"` + version + `"}`))
-}
-
-func jwkFunc(w http.ResponseWriter, r *http.Request) {
-	json := []byte(`{"keys":[`)
-	if privRSA != nil {
-		k := jose.JSONWebKey{Key: privRSA.Public()}
-		kid, err := k.Thumbprint(crypto.SHA256)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-jwk-1, %v", err)
-			return
-		}
-		k.KeyID = hex.EncodeToString(kid)
-		mj, err := k.MarshalJSON()
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-jwk-2, %v", err)
-			return
-		}
-		json = append(json, mj...)
-	}
-	if privEdDSA != nil {
-		k := jose.JSONWebKey{Key: privEdDSA.Public()}
-		mj, err := k.MarshalJSON()
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-jwk-3, %v", err)
-			return
-		}
-		json = append(json, []byte(`,`)...)
-		json = append(json, mj...)
-	}
-	json = append(json, []byte(`]}`)...)
-
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write(json)
-
-}
-
 func serverLdap() (*ldap.Server, <-chan bool) {
 	routes := ldap.NewRouteMux()
 	routes.Bind(handleBind)
@@ -919,9 +440,9 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 	server.Handle(routes)
 
 	done := make(chan bool)
-	if options.LdapServer {
+	if opts.LdapServer {
 		go func(s *ldap.Server) {
-			addr := ":" + strconv.Itoa(options.Ldap)
+			addr := ":" + strconv.Itoa(opts.Ldap)
 			log.Printf("Starting auth server on port %v...", addr)
 			err := s.ListenAndServe(addr)
 			log.Printf("server closed %v", err)
@@ -935,16 +456,16 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 }
 
 func serverRest() (*http.Server, <-chan bool, error) {
-	tokenExp = time.Second * time.Duration(options.ExpireAccess)
-	refreshExp = time.Second * time.Duration(options.ExpireRefresh)
-	codeExp = time.Second * time.Duration(options.ExpireCode)
+	tokenExp = time.Second * time.Duration(opts.ExpireAccess)
+	refreshExp = time.Second * time.Duration(opts.ExpireRefresh)
+	codeExp = time.Second * time.Duration(opts.ExpireCode)
 
 	router := mux.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return handlers.LoggingHandler(os.Stdout, next)
 	})
 
-	if options.UserEndpoints {
+	if opts.UserEndpoints {
 		router.HandleFunc("/login", login).Methods("POST")
 		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/signup", signup).Methods("POST")
@@ -963,12 +484,12 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	router.HandleFunc("/liveness", liveness).Methods("GET")
 
 	//display for debug and testing
-	if options.Dev != "" {
+	if opts.Dev != "" {
 		router.HandleFunc("/send/email/{action}/{email}/{token}", displayEmail).Methods("GET")
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("GET")
 	}
 
-	if options.OauthEndpoints {
+	if opts.OauthEndpoints {
 		router.HandleFunc("/oauth/login", login).Methods("POST")
 		router.HandleFunc("/oauth/token", oauth).Methods("POST")
 		router.HandleFunc("/oauth/revoke", revoke).Methods("POST")
@@ -984,7 +505,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	})
 
 	s := &http.Server{
-		Addr:         ":" + strconv.Itoa(options.Port),
+		Addr:         ":" + strconv.Itoa(opts.Port),
 		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -1027,7 +548,7 @@ func writeErr(w http.ResponseWriter, code int, error string, detailError string,
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(code)
-	if options.DetailedError {
+	if opts.DetailedError {
 		msg = `,"error_message":"` + msg + `"`
 	} else {
 		msg = ""
@@ -1102,9 +623,9 @@ func encodeAccessToken(role string, subject string, scope string, audience strin
 	}
 	var sig jose.Signer
 	var err error
-	if options.RS256 != "" {
+	if opts.RS256 != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if options.EdDSA != "" {
+	} else if opts.EdDSA != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
@@ -1129,9 +650,9 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 
 	var sig jose.Signer
 	var err error
-	if options.RS256 != "" {
+	if opts.RS256 != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if options.EdDSA != "" {
+	} else if opts.EdDSA != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
@@ -1157,9 +678,9 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
 
 	var sig jose.Signer
 	var err error
-	if options.RS256 != "" {
+	if opts.RS256 != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if options.EdDSA != "" {
+	} else if opts.EdDSA != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
@@ -1197,6 +718,132 @@ func resetRefreshToken(oldToken string) (string, error) {
 	return newToken, nil
 }
 
+func checkRefresh(email string, token string) (string, string, int64, error) {
+	result, err := dbSelect(email)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", email, err)
+	}
+
+	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
+		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", email, err)
+	}
+
+	if result.refreshToken == nil || token != *result.refreshToken {
+		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", token, *result.refreshToken)
+	}
+	return encodeTokens(result, email)
+}
+
+func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
+	encodedAccessToken, err := encodeAccessToken(string(result.role), email, opts.Scope, opts.Audience, opts.Issuer)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
+	}
+
+	refreshToken := *result.refreshToken
+	if opts.ResetRefresh {
+		refreshToken, err = resetRefreshToken(refreshToken)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
+		}
+	}
+
+	encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", email, err)
+	}
+	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
+}
+
+func checkCodeToken(token string) (*CodeClaims, error) {
+	tok, err := jwt.ParseSigned(token)
+	if err != nil {
+		return nil, fmt.Errorf("ERR-check-refresh-01, could not check sig %v", err)
+	}
+	codeClaims := &CodeClaims{}
+	if tok.Headers[0].Algorithm == string(jose.RS256) {
+		err := tok.Claims(privRSA.Public(), codeClaims)
+		if err != nil {
+			return nil, fmt.Errorf("ERR-check-refresh-02, could not parse claims %v", err)
+		}
+	} else if tok.Headers[0].Algorithm == string(jose.HS256) {
+		err := tok.Claims(jwtKey, codeClaims)
+		if err != nil {
+			return nil, fmt.Errorf("ERR-check-refresh-03, could not parse claims %v", err)
+		}
+	} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
+		err := tok.Claims(privEdDSA.Public(), codeClaims)
+		if err != nil {
+			return nil, fmt.Errorf("ERR-check-refresh-04, could not parse claims %v", err)
+		}
+	} else {
+		return nil, fmt.Errorf("ERR-check-refresh-05, could not parse claims, no algo found %v", tok.Headers[0].Algorithm)
+	}
+	t := time.Unix(codeClaims.ExpiresAt, 0)
+	if !t.After(time.Now()) {
+		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
+	}
+	return codeClaims, nil
+}
+
+func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.OAuthUser != "" || opts.OAuthPass != "" {
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
+				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-basic-auth-01, could not check user/pass: %v", user)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+func basic(_ http.ResponseWriter, r *http.Request) error {
+	if opts.OAuthUser != "" || opts.OAuthPass != "" {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
+			return fmt.Errorf("ERR-basic-auth-01, could not check user/pass: %v", user)
+		}
+	}
+	return nil
+}
+
+func param(name string, r *http.Request) (string, error) {
+	n1 := mux.Vars(r)[name]
+	n2, err := url.QueryUnescape(r.URL.Query().Get(name))
+	if err != nil {
+		return "", err
+	}
+	err = r.ParseForm()
+	if err != nil {
+		return "", err
+	}
+	n3 := r.FormValue(name)
+
+	if n1 == "" {
+		if n2 == "" {
+			return n3, nil
+		}
+		return n2, nil
+	}
+	return n1, nil
+}
+
+func paramJson(name string, r *http.Request) (string, error) {
+	var objmap map[string]json.RawMessage
+	err := json.NewDecoder(r.Body).Decode(&objmap)
+	if err != nil {
+		return "", err
+	}
+	var s string
+	err = json.Unmarshal(objmap[name], &s)
+	if err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
 func main() {
 	f, err := os.Open("banner.txt")
 	if err == nil {
@@ -1205,9 +852,7 @@ func main() {
 		log.Printf("could not display banner...")
 	}
 
-	o := NewOpts()
-	defaultOpts(o)
-	options = o
+	opts = NewOpts()
 
 	db, err = initDB()
 	if err != nil {

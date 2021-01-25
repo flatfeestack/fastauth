@@ -2,8 +2,6 @@ module fastauth
 
 go 1.13
 
-replace github.com/vjeantet/ldapserver => github.com/tbocek/ldapserver v1.0.2-0.20200928134514-0dca787dbfcb
-
 require (
 	github.com/dimiro1/banner v1.0.0
 	github.com/go-ldap/ldap/v3 v3.2.3
@@ -18,7 +16,7 @@ require (
 	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible
 	github.com/stretchr/testify v1.6.1
-	github.com/vjeantet/ldapserver v1.0.1
+	github.com/vjeantet/ldapserver v1.0.2-0.20201119091145-9f1711e226a4
 	github.com/xlzd/gotp v0.0.0-20181030022105-c8557ba2c119
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a
 	golang.org/x/sys v0.0.0-20200929083018-4d22bbb62b3c // indirect

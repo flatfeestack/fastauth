@@ -708,7 +708,42 @@ func revoke(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func logout(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Location", r.URL.Query()["redirect_uri"][0])
-	w.WriteHeader(303)
+func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	result, err := dbSelect(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-oauth-06 %v", err)
+		return
+	}
+
+	refreshToken := *result.refreshToken
+	_, err = resetRefreshToken(refreshToken)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
+		return
+	}
+
+	if len(r.URL.Query()["redirect_uri"]) > 0 {
+		w.Header().Set("Location", r.URL.Query()["redirect_uri"][0])
+		w.WriteHeader(http.StatusSeeOther)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func timeWarp(w http.ResponseWriter, r *http.Request) {
+	m := mux.Vars(r)
+	h := m["hours"]
+	if h == "" {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-timewarp-01 %v", m)
+		return
+	}
+	hours, err := strconv.Atoi(h)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-timewarp-02 %v", err)
+		return
+	}
+
+	hoursAdd += hours
+	log.Printf("time warp: %v", timeNow())
+	w.WriteHeader(http.StatusOK)
 }

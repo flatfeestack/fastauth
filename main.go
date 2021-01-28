@@ -52,6 +52,7 @@ var (
 	tokenExp     time.Duration
 	refreshExp   time.Duration
 	codeExp      time.Duration
+	hoursAdd     int
 )
 
 type Credentials struct {
@@ -137,6 +138,7 @@ func NewOpts() *Opts {
 	}
 
 	opts := &Opts{}
+	flag.StringVar(&opts.Env, "env", lookupEnv("ENV", "local"), "ENV variable")
 	flag.StringVar(&opts.Dev, "dev", lookupEnv("DEV"), "Dev settings with initial secret")
 	flag.StringVar(&opts.Issuer, "issuer", lookupEnv("ISSUER"), "name of issuer, default in dev is my-issuer")
 	flag.IntVar(&opts.Port, "port", lookupEnvInt("PORT",
@@ -350,7 +352,7 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 					return
 				}
 
-				if claims.Expiry != nil && !claims.Expiry.Time().After(time.Now()) {
+				if claims.Expiry != nil && !claims.Expiry.Time().After(timeNow()) {
 					writeErr(w, http.StatusBadRequest, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
 					return
 				}
@@ -392,7 +394,7 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 		return nil, fmt.Errorf("ERR-check-refresh-05, could not parse claims, no algo found %v", tok.Headers[0].Algorithm)
 	}
 	t := time.Unix(refreshClaims.ExpiresAt, 0)
-	if !t.After(time.Now()) {
+	if !t.After(timeNow()) {
 		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
 	}
 	return refreshClaims, nil
@@ -487,6 +489,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	if opts.Dev != "" {
 		router.HandleFunc("/send/email/{action}/{email}/{token}", displayEmail).Methods("GET")
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("GET")
+		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods("POST")
 	}
 
 	if opts.OauthEndpoints {
@@ -496,7 +499,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/oauth/authorize", authorize).Methods("GET")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
 
-		router.HandleFunc("/authen/logout", logout).Methods("GET")
+		router.HandleFunc("/authen/logout", jwtAuth(logout)).Methods("GET")
 	}
 
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -615,7 +618,7 @@ func encodeAccessToken(role string, subject string, scope string, audience strin
 		Role:  role,
 		Scope: scope,
 		Claims: jwt.Claims{
-			Expiry:   jwt.NewNumericDate(time.Now().Add(tokenExp)),
+			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
 			Subject:  subject,
 			Audience: []string{audience},
 			Issuer:   issuer,
@@ -645,7 +648,7 @@ func encodeAccessToken(role string, subject string, scope string, audience strin
 func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	rc := &RefreshClaims{}
 	rc.Subject = subject
-	rc.ExpiresAt = time.Now().Add(refreshExp).Unix()
+	rc.ExpiresAt = timeNow().Add(refreshExp).Unix()
 	rc.Token = token
 
 	var sig jose.Signer
@@ -672,7 +675,7 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod string) (string, int64, error) {
 	cc := &CodeClaims{}
 	cc.Subject = subject
-	cc.ExpiresAt = time.Now().Add(codeExp).Unix()
+	cc.ExpiresAt = timeNow().Add(codeExp).Unix()
 	cc.CodeChallenge = codeChallenge
 	cc.CodeCodeChallengeMethod = codeChallengeMethod
 
@@ -780,7 +783,7 @@ func checkCodeToken(token string) (*CodeClaims, error) {
 		return nil, fmt.Errorf("ERR-check-refresh-05, could not parse claims, no algo found %v", tok.Headers[0].Algorithm)
 	}
 	t := time.Unix(codeClaims.ExpiresAt, 0)
-	if !t.After(time.Now()) {
+	if !t.After(timeNow()) {
 		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
 	}
 	return codeClaims, nil
@@ -842,6 +845,14 @@ func paramJson(name string, r *http.Request) (string, error) {
 		return "", err
 	}
 	return s, nil
+}
+
+func timeNow() time.Time {
+	if opts.Env == "local" || opts.Env == "dev" {
+		return time.Now().Add(time.Duration(hoursAdd) * time.Hour)
+	} else {
+		return time.Now()
+	}
 }
 
 func main() {

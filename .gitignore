@@ -2,3 +2,6 @@ fastauth
 .idea
 *.db
 .env
+example-tokenizer/tokenizer
+example-mail/mailer
+example-upload/fileupload

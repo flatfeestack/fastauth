@@ -6,7 +6,7 @@ After=syslog.target network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/fileupload -port 8090 -base /var/www -hs256=FQBPFTILZI5K7CZ2ZUG3DNOZ43LRARIDKCKYAUQL5AKGFVKLSCNQ====
+ExecStart=/usr/local/bin/fileupload -port=8090 -base=/var/www -hs256=<SECRET>
 Restart=on-failure
 RestartSec=10
 KillMode=process

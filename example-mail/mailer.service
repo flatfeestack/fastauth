@@ -1,0 +1,15 @@
+[Unit]
+Description=Mailer
+
+Wants=network.target
+After=syslog.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mailer -smtp-pw=<PW> -smtp-port=587 -smtp-host=<HOST> -port=8091 -hs256=<SECRET>
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

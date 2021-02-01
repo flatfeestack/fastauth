@@ -263,14 +263,14 @@ func NewOpts() *Opts {
 			log.Fatalf("cannot decode %v", opts.RS256)
 		}
 		i, err := x509.ParsePKCS8PrivateKey(rsaDec)
-		privRSA = i.(*rsa.PrivateKey)
 		if err != nil {
 			log.Fatalf("cannot decode %v", rsaDec)
 		}
+		privRSA = i.(*rsa.PrivateKey)
 		k := jose.JSONWebKey{Key: privRSA.Public()}
 		kid, err := k.Thumbprint(crypto.SHA256)
 		if err != nil {
-			log.Fatalf("cannot decode %v", rsaDec)
+			log.Fatalf("cannot thumb rsa %v", err)
 		}
 		privRSAKid = hex.EncodeToString(kid)
 	}
@@ -285,7 +285,7 @@ func NewOpts() *Opts {
 		k := jose.JSONWebKey{Key: privEdDSA.Public()}
 		kid, err := k.Thumbprint(crypto.SHA256)
 		if err != nil {
-			log.Fatalf("cannot decode %v", opts.EdDSA)
+			log.Fatalf("cannot thumb eddsa %v", err)
 		}
 		privEdDSAKid = hex.EncodeToString(kid)
 	}

@@ -4,6 +4,8 @@ github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dimiro1/banner v1.0.0 h1:t16KGiaSKGawJJAzHhiOZ7/soer3CR8+GK8FG+UB5TU=
 github.com/dimiro1/banner v1.0.0/go.mod h1:B1JJ2lANkn1MHpV/PvaGV0UcZ7rHoj2dkYTkWI1kCOs=
+github.com/domodwyer/mailyak/v3 v3.3.1 h1:d6IxQog4xN8SzjIRc3QkqBbG4jQzJAtSLEETircHmxE=
+github.com/domodwyer/mailyak/v3 v3.3.1/go.mod h1:lOm/u9CyCVWHeaAmHIdF4RiKVxKUT/H5XX10lIKAL6c=
 github.com/felixge/httpsnoop v1.0.1 h1:lvB5Jl89CsZtGIWuTcDM1E/vkVs49/Ml7JJe07l8SPQ=
 github.com/felixge/httpsnoop v1.0.1/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/go-asn1-ber/asn1-ber v1.5.1 h1:pDbRAunXzIUXfx4CB2QJFv5IuPiuoW+sWvr/Us009o8=

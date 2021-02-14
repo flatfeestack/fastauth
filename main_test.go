@@ -35,7 +35,7 @@ func TestSignup(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 
@@ -50,7 +50,7 @@ func TestSignupWrongEmail(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doSignup("tomtest.ch", "testtest")
 
@@ -68,7 +68,7 @@ func TestSignupTwice(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	resp.Body.Close()
@@ -89,7 +89,7 @@ func TestSignupWrong(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	resp = doSignup("tom@test.ch", "testtest")
@@ -110,7 +110,7 @@ func TestConfirm(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, 200, resp.StatusCode)
@@ -128,7 +128,7 @@ func TestLogin(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doSignup("tom@test.ch", "testtest")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -149,7 +149,7 @@ func TestLoginFalse(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -176,7 +176,7 @@ func TestRefresh(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true",
 		"-expire-refresh=10")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
@@ -192,7 +192,7 @@ func TestReset(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true",
 		"-expire-refresh=1")
 
@@ -219,7 +219,7 @@ func TestResetFailed(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true",
 		"-expire-refresh=1")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
@@ -245,7 +245,7 @@ func TestTOTP(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -273,7 +273,7 @@ func TestLoginTOTP(t *testing.T) {
 		"-issuer=FFFS",
 		"-port="+strconv.Itoa(testPort),
 		"-db-path="+testDBPath,
-		"-email-url="+testUrl+"/send/email/{action}/{email}/{token}",
+		"-email-url="+testUrl+"/send/email/{email}/{token}",
 		"-dev=true")
 	resp := doAll("tom@test.ch", "testtest", "0123456789012345678901234567890123456789012")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -323,12 +323,14 @@ func doAllTOTP(token string) *gotp.TOTP {
 }
 
 func doConfirmReset(email string, token string, password string) *http.Response {
-	data := Credentials{
+	data := Credentials {
+		Email: email,
 		Password: password,
+		EmailTokenReset: token,
 	}
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)
-	req, _ := http.NewRequest("POST", testUrl+"/confirm/reset/"+email+"/"+token, body)
+	req, _ := http.NewRequest("POST", testUrl+"/confirm/reset", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := http.DefaultClient.Do(req)
 	return resp

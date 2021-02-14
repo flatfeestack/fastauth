@@ -23,7 +23,6 @@ import (
 	ldap "github.com/vjeantet/ldapserver"
 	"github.com/xlzd/gotp"
 	ed25519 "golang.org/x/crypto/ed25519"
-	"golang.org/x/crypto/scrypt"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"hash/crc64"
@@ -70,6 +69,8 @@ type Credentials struct {
 	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
 	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
+	EmailTokenReset         string `json:"email_token_reset,omitempty" schema:"email_token_reset"`
+
 }
 
 type TokenClaims struct {
@@ -110,7 +111,10 @@ type Opts struct {
 	DBPath         string
 	DBDriver       string
 	UrlEmail       string
-	UrlSMS         string
+	EmailToken     string
+	EmailLinkPrefix string
+	UrlSms         string
+	SmsToken       string
 	Audience       string
 	ExpireAccess   int
 	ExpireRefresh  int
@@ -150,7 +154,10 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.DBDriver, "db-driver", lookupEnv("DB_DRIVER",
 		"sqlite3"), "DB driver")
 	flag.StringVar(&opts.UrlEmail, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
-	flag.StringVar(&opts.UrlSMS, "sms-url", lookupEnv("SMS_URL"), "SMS service URL")
+	flag.StringVar(&opts.EmailToken, "email-token", lookupEnv("EMAIL_TOKEN"), "Email service token")
+	flag.StringVar(&opts.EmailLinkPrefix, "email-prefix", lookupEnv("EMAIL_PREFIX"), "Email link prefix")
+	flag.StringVar(&opts.UrlSms, "sms-url", lookupEnv("SMS_URL"), "SMS service URL")
+	flag.StringVar(&opts.SmsToken, "sms-token", lookupEnv("SMS_TOKEN"), "SMS service token")
 	flag.StringVar(&opts.Audience, "audience", lookupEnv("AUDIENCE"), "Audience, default in dev is my-audience")
 	flag.IntVar(&opts.ExpireAccess, "expire-access", lookupEnvInt("EXPIRE_ACCESS",
 		30*60), "Access token expiration in seconds, default 30min")
@@ -190,10 +197,10 @@ func NewOpts() *Opts {
 			opts.Issuer = "my-issuer"
 		}
 		if opts.UrlEmail == "" {
-			opts.UrlEmail = "http://localhost:8080/send/email/{action}/{email}/{token}"
+			opts.UrlEmail = "http://localhost:8080/send/email/{email}/{token}"
 		}
-		if opts.UrlSMS == "" {
-			opts.UrlSMS = "http://localhost:8080/send/sms/{sms}/{token}"
+		if opts.UrlSms == "" {
+			opts.UrlSms = "http://localhost:8080/send/sms/{sms}/{token}"
 		}
 
 		if strings.ToLower(opts.HS256) != "false" {
@@ -414,12 +421,12 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 		return nil, "blocked", fmt.Errorf("ERR-checkEmail-03, user %v no email verified: %v", email, err)
 	}
 
-	dk, err := scrypt.Key([]byte(password), result.salt, 16384, 8, 1, 32)
+	storedPw, calcPw, err := checkPw(password, result.password)
 	if err != nil {
 		return nil, "blocked", fmt.Errorf("ERR-checkEmail-04, key %v error: %v", email, err)
 	}
 
-	if bytes.Compare(dk, result.password) != 0 {
+	if bytes.Compare(calcPw, storedPw) != 0 {
 		err = incErrorCount(email)
 		if err != nil {
 			return nil, "blocked", fmt.Errorf("ERR-checkEmail-05, key %v error: %v", email, err)
@@ -473,7 +480,8 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/signup", signup).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
-		router.HandleFunc("/confirm/reset/{email}/{token}", confirmReset).Methods("POST")
+		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods("Post")
+		router.HandleFunc("/confirm/reset", confirmReset).Methods("POST")
 
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods("POST")
 		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods("POST")
@@ -487,8 +495,8 @@ func serverRest() (*http.Server, <-chan bool, error) {
 
 	//display for debug and testing
 	if opts.Dev != "" {
-		router.HandleFunc("/send/email/{action}/{email}/{token}", displayEmail).Methods("GET")
-		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("GET")
+		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods("POST")
+		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("POST")
 		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods("POST")
 	}
 
@@ -559,15 +567,28 @@ func writeErr(w http.ResponseWriter, code int, error string, detailError string,
 	w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/` + error + `/` + detailError + `"` + msg + `}`))
 }
 
-func sendEmail(url string) error {
+func sendEmail(url string, e EmailRequest) error {
 	c := &http.Client{
 		Timeout: 15 * time.Second,
 	}
-	resp, err := c.Get(url)
+	j, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(j))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Authorization", "Bearer " + opts.EmailToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("could not update DB as status from email server: %v %v", resp.Status, resp.StatusCode)
 	}
@@ -738,7 +759,7 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	encodedAccessToken, err := encodeAccessToken(string(result.role), email, opts.Scope, opts.Audience, opts.Issuer)
+	encodedAccessToken, err := encodeAccessToken(string(result.meta), email, opts.Scope, opts.Audience, opts.Issuer)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

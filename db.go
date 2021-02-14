@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"golang.org/x/crypto/scrypt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -14,8 +13,7 @@ import (
 type dbRes struct {
 	sms           *string
 	password      []byte
-	role          []byte
-	salt          []byte
+	meta          []byte
 	emailVerified *time.Time
 	smsVerified   *time.Time
 	totpVerified  *time.Time
@@ -27,22 +25,22 @@ type dbRes struct {
 func dbSelect(email string) (*dbRes, error) {
 	var res dbRes
 	err := db.
-		QueryRow("SELECT sms, password, role, salt, emailVerified, refreshToken, totp, smsVerified, totpVerified, errorCount FROM auth WHERE email = ?", email).
-		Scan(&res.sms, &res.password, &res.role, &res.salt, &res.emailVerified, &res.refreshToken, &res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
+		QueryRow("SELECT sms, password, meta, emailVerified, refreshToken, totp, smsVerified, totpVerified, errorCount FROM auth WHERE email = ?", email).
+		Scan(&res.sms, &res.password, &res.meta, &res.emailVerified, &res.refreshToken, &res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
 	if err != nil {
 		return nil, err
 	}
 	return &res, nil
 }
 
-func insertUser(salt []byte, email string, dk []byte, role string, emailToken string, refreshToken string) error {
-	stmt, err := db.Prepare("INSERT INTO auth (email, password, role, salt, emailToken, refreshToken) VALUES (?, ?, ?, ?, ?, ?)")
+func insertUser(email string, dk []byte, meta string, emailToken string, refreshToken string) error {
+	stmt, err := db.Prepare("INSERT INTO auth (email, password, meta, emailToken, refreshToken) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(email, dk, []byte(role), salt, emailToken, refreshToken)
+	res, err := stmt.Exec(email, dk, []byte(meta), emailToken, refreshToken)
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
@@ -57,14 +55,14 @@ func updateRefreshToken(oldRefreshToken string, newRefreshToken string) error {
 	return handleErr(res, err, "UPDATE refreshToken", "n/a")
 }
 
-func resetPassword(salt []byte, email string, dk []byte, forgetEmailToken string) error {
-	stmt, err := db.Prepare("UPDATE auth SET password = ?, salt = ?, totp = NULL, sms = NULL WHERE email = ? AND forgetEmailToken = ?")
+func resetPassword(email string, forgetEmailToken string, newPw []byte) error {
+	stmt, err := db.Prepare("UPDATE auth SET password = ?, totp = NULL, sms = NULL WHERE email = ? AND forgetEmailToken = ?")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(dk, salt, email, forgetEmailToken)
+	res, err := stmt.Exec(newPw, email, forgetEmailToken)
 	return handleErr(res, err, "UPDATE auth password", email)
 }
 
@@ -181,15 +179,14 @@ func handleErr(res sql.Result, err error, info string, email string) error {
 
 ///////// Setup
 
-func addInitialUserWithRole(username string, password string, role string) error {
+func addInitialUserWithMeta(username string, password string, meta string) error {
 	res, err := dbSelect(username)
 	if res == nil || err != nil {
-		salt := []byte{0}
-		dk, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+		dk, err := newPw(password, 0)
 		if err != nil {
 			return err
 		}
-		err = insertUser(salt, username, dk, role, "emailToken", "refreshToken")
+		err = insertUser(username, dk, meta, "emailToken", "refreshToken")
 		if err != nil {
 			return err
 		}
@@ -235,22 +232,22 @@ func setupDB() {
 		//add user for development
 		users := strings.Split(opts.Users, ";")
 		for _, user := range users {
-			userPwRole := strings.Split(user, ":")
-			if len(userPwRole) == 2 {
-				role := "USR"
-				err := addInitialUserWithRole(userPwRole[0], userPwRole[1], role)
+			userPwMeta := strings.Split(user, ":")
+			if len(userPwMeta) == 2 {
+				meta := "USR"
+				err := addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], meta)
 				if err == nil {
-					log.Printf("insterted user %v", userPwRole[0])
+					log.Printf("insterted user %v", userPwMeta[0])
 				} else {
-					log.Printf("could not insert %v", userPwRole[0])
+					log.Printf("could not insert %v", userPwMeta[0])
 				}
-			} else if len(userPwRole) == 3 {
-				role := userPwRole[2]
-				err := addInitialUserWithRole(userPwRole[0], userPwRole[1], role)
+			} else if len(userPwMeta) == 3 {
+				meta := userPwMeta[2]
+				err := addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], meta)
 				if err == nil {
-					log.Printf("insterted user %v", userPwRole[0])
+					log.Printf("insterted user %v", userPwMeta[0])
 				} else {
-					log.Printf("could not insert %v", userPwRole[0])
+					log.Printf("could not insert %v", userPwMeta[0])
 				}
 			} else {
 				log.Printf("username and password need to be seperated by ':'")

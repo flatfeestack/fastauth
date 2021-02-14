@@ -12,13 +12,37 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
 	"golang.org/x/crypto/scrypt"
+	"golang.org/x/text/language"
 	"gopkg.in/square/go-jose.v2"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+)
+
+type EmailRequest struct {
+	MailTo      string `json:"mail_to,omitempty"`
+	Subject     string `json:"subject"`
+	TextMessage string `json:"text_message"`
+	HtmlMessage string `json:"html_message"`
+}
+
+var matcher = language.NewMatcher([]language.Tag{
+	language.English,
+	language.German,
+})
+
+type scryptParam struct {
+	n int
+	r int
+	p int
+	len int
+}
+var (
+	m = map[uint8]scryptParam{0: {16384, 8, 1, 32}}
 )
 
 func confirmEmail(w http.ResponseWriter, r *http.Request) {
@@ -32,12 +56,74 @@ func confirmEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	result, err := dbSelect(email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-02, update email token for %v failed, token %v: %v", email, token, err)
+		return
+	}
+
+	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, email)
+	oauth := OAuth{
+		AccessToken:  encodedAccessToken,
+		TokenType:    "Bearer",
+		RefreshToken: encodedRefreshToken,
+		Expires:      strconv.FormatInt(expiresAt, 10),
+	}
+	oauthEnc, err := json.Marshal(oauth)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+		return
+	}
+	w.Write(oauthEnc)
+}
+
+type EmailToken struct {
+	Email string `json:"email"`
+	Token string `json:"token"`
+}
+
+func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
+	var et EmailToken
+	err := json.NewDecoder(r.Body).Decode(&et)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
+		return
+	}
+
+	err = updateEmailToken(et.Email, et.Token)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
+		return
+	}
+
+	result, err := dbSelect(et.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-02, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
+		return
+	}
+
+	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, et.Email)
+	oauth := OAuth{
+		AccessToken:  encodedAccessToken,
+		TokenType:    "Bearer",
+		RefreshToken: encodedRefreshToken,
+		Expires:      strconv.FormatInt(expiresAt, 10),
+	}
+	oauthEnc, err := json.Marshal(oauth)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+		return
+	}
+	w.Write(oauthEnc)
 }
 
 func signup(w http.ResponseWriter, r *http.Request) {
+	buf, _ := ioutil.ReadAll(r.Body)
+	rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
+	rdr2 := ioutil.NopCloser(bytes.NewBuffer(buf))
+
 	var cred Credentials
-	err := json.NewDecoder(r.Body).Decode(&cred)
+	err := json.NewDecoder(rdr1).Decode(&cred)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
@@ -55,7 +141,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rnd, err := genRnd(48)
+	rnd, err := genRnd(32)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-04, RND %v err %v", cred.Email, err)
 		return
@@ -64,30 +150,53 @@ func signup(w http.ResponseWriter, r *http.Request) {
 
 	//https://security.stackexchange.com/questions/11221/how-big-should-salt-be
 
-	salt := rnd[16:32]
-	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
+	calcPw, err := newPw(cred.Password, 0)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
 		return
 	}
 
-	refreshToken := base32.StdEncoding.EncodeToString(rnd[32:48])
+	refreshToken := base32.StdEncoding.EncodeToString(rnd[16:32])
 
-	err = insertUser(salt, cred.Email, dk, "USR", emailToken, refreshToken)
+	err = insertUser(cred.Email, calcPw, "USR", emailToken, refreshToken)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-06, insert user failed: %v", err)
 		return
 	}
 
+	var other map[string]string
+	err = json.NewDecoder(rdr2).Decode(&other)
+	if err != nil {
+		log.Printf("No or wrong json, ignoring [%v]", err)
+	}
+	other["token"] = emailToken
+
+	subject := parseTemplate("template-subject-signup_"+lang(r)+".tmpl", other)
+	if subject == "" {
+		subject = "Validate your email"
+	}
+	textMessage := parseTemplate("template-plain-signup_"+lang(r)+".tmpl", other)
+	if textMessage == "" {
+		textMessage = "Click on this link " + opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken
+	}
+	htmlMessage := parseTemplate("template-html-signup_"+lang(r)+".tmpl", other)
+
+	e := EmailRequest{
+		MailTo:      url.QueryEscape(cred.Email),
+		Subject:     subject,
+		TextMessage: textMessage,
+		HtmlMessage: htmlMessage,
+	}
+
 	url := strings.Replace(opts.UrlEmail, "{email}", url.QueryEscape(cred.Email), 1)
 	url = strings.Replace(url, "{token}", emailToken, 1)
-	url = strings.Replace(url, "{action}", "signup", 1)
 
-	err = sendEmail(url)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, send email failed: %v", url)
-		return
-	}
+	go func() {
+		err = sendEmail(url, e)
+		if err!=nil {
+			log.Printf("ERR-signup-07, send email failed: %v, %v\n", url, err);
+		}
+	}()
 
 	err = updateMailStatus(cred.Email)
 	if err != nil {
@@ -95,6 +204,30 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func lang(r *http.Request) string {
+	accept := r.Header.Get("Accept-Language")
+	tag, _ := language.MatchStrings(matcher, accept)
+	b, _ := tag.Base()
+	return b.String()
+}
+
+func parseTemplate(filename string, other map[string]string) string {
+	textMessage := ""
+	tmplPlain, err := template.ParseFiles(filename)
+	if err == nil {
+		var buf bytes.Buffer
+		err = tmplPlain.Execute(&buf, other)
+		if err == nil {
+			textMessage = buf.String()
+		} else {
+			log.Printf("cannot execute template file [%v], err: %v", filename, err)
+		}
+	} else {
+		log.Printf("cannot prepare file template file [%v], err: %v", filename, err)
+	}
+	return textMessage
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +271,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		totp := newTOTP(*result.totp)
 		token := totp.Now()
 		if cred.TOTP == "" {
-			url := strings.Replace(opts.UrlSMS, "{sms}", *result.sms, 1)
+			url := strings.Replace(opts.UrlSms, "{sms}", *result.sms, 1)
 			url = strings.Replace(url, "{token}", token, 1)
 			err = sendSMS(url)
 			if err != nil {
@@ -232,10 +365,9 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-
 	rnd, err := genRnd(16)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-02, RND %v err %v", email, err)
@@ -243,71 +375,114 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	forgetEmailToken := base32.StdEncoding.EncodeToString(rnd)
 
+
+
 	err = updateEmailForgotToken(email, forgetEmailToken)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
 		return
 	}
 
+	var other map[string]string
+	err = json.NewDecoder(r.Body).Decode(&other)
+	if err != nil {
+		log.Printf("No or wrong json, ignoring [%v]", err)
+	}
+
+	subject := parseTemplate("template-subject-reset_"+lang(r)+".tmpl", other)
+	if subject == "" {
+		subject = "Reset your email"
+	}
+	textMessage := parseTemplate("template-plain-reset_"+lang(r)+".tmpl", other)
+	if textMessage == "" {
+		textMessage = "Click on this link " + opts.EmailLinkPrefix + "/confirm/reset/" + email+ "/" + forgetEmailToken
+	}
+	htmlMessage := parseTemplate("template-html-reset_"+lang(r)+".tmpl", other)
+
+	e := EmailRequest{
+		MailTo:      email,
+		Subject:     subject,
+		TextMessage: textMessage,
+		HtmlMessage: htmlMessage,
+	}
+
 	url := strings.Replace(opts.UrlEmail, "{email}", email, 1)
 	url = strings.Replace(url, "{token}", forgetEmailToken, 1)
-	url = strings.Replace(url, "{action}", "reset", 1)
 
-	err = sendEmail(url)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-04, send email failed: %v", url)
-		return
-	}
+	go func() {
+		err = sendEmail(url, e)
+		if err != nil {
+			log.Printf( "ERR-reset-email-04, send email failed: %v", url)
+		}
+	}()
 
 	w.WriteHeader(http.StatusOK)
 }
 
+func newPw(password string, version uint8) ([]byte, error) {
+	salt, err := genRnd(16) //salt is always 128bit
+	if err != nil {
+		return nil, err
+	}
+
+	calcPw, err := scrypt.Key([]byte(password), salt, m[version].n, m[version].r, m[version].p, m[version].len)
+	if err != nil {
+		return nil, err
+	}
+
+	ret :=[]byte{version}
+	ret = append(ret, salt...)
+	ret = append(ret, calcPw...)
+	return ret, nil
+}
+
+func checkPw(checkPw string, encodedPw []byte) ([]byte, []byte, error){
+	key := encodedPw[0]
+	salt := encodedPw[1:17] //salt is always 128bit
+	storedPw := encodedPw[17:17+m[key].len]
+	calcPw, err := scrypt.Key([]byte(checkPw), salt, m[key].n, m[key].r, m[key].p, m[key].len)
+	return storedPw, calcPw, err
+}
+
 func confirmReset(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	email, err := url.QueryUnescape(vars["email"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
-		return
-	}
-
-	token, err := url.QueryUnescape(vars["token"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-02, query unescape token %v err: %v", vars["token"], err)
-		return
-	}
-
 	var cred Credentials
-	err = json.NewDecoder(r.Body).Decode(&cred)
+	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-03, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
 	}
 
-	err = validatePassword(cred.Password)
+	calcPw, err := newPw(cred.Password, 0)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-04, password is wrong %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
 		return
 	}
 
-	salt, err := genRnd(16)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-05, RND %v err %v", email, err)
-		return
-	}
-
-	dk, err := scrypt.Key([]byte(cred.Password), salt, 16384, 8, 1, 32)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-confirm-reset-email-06, key %v error: %v", cred.Email, err)
-		return
-	}
-
-	err = resetPassword(salt, email, dk, token)
+	err = resetPassword(cred.Email, cred.EmailTokenReset, calcPw)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	result, err := dbSelect(cred.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-08, update email token for %v failed, token %v: %v", cred.Email, cred.EmailTokenReset, err)
+		return
+	}
+
+	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, cred.Email)
+	oauth := OAuth{
+		AccessToken:  encodedAccessToken,
+		TokenType:    "Bearer",
+		RefreshToken: encodedRefreshToken,
+		Expires:      strconv.FormatInt(expiresAt, 10),
+	}
+	oauthEnc, err := json.Marshal(oauth)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+		return
+	}
+	w.Write(oauthEnc)
 }
 
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
@@ -383,7 +558,7 @@ func setupSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 
 	totp := newTOTP(secret)
 
-	url := strings.Replace(opts.UrlSMS, "{sms}", sms, 1)
+	url := strings.Replace(opts.UrlSms, "{sms}", sms, 1)
 	url = strings.Replace(url, "{token}", totp.Now(), 1)
 
 	err = sendSMS(url)

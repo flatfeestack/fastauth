@@ -36,11 +36,12 @@ var matcher = language.NewMatcher([]language.Tag{
 })
 
 type scryptParam struct {
-	n int
-	r int
-	p int
+	n   int
+	r   int
+	p   int
 	len int
 }
+
 var (
 	m = map[uint8]scryptParam{0: {16384, 8, 1, 32}}
 )
@@ -188,13 +189,13 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		HtmlMessage: htmlMessage,
 	}
 
-	url := strings.Replace(opts.UrlEmail, "{email}", url.QueryEscape(cred.Email), 1)
+	url := strings.Replace(opts.EmailUrl, "{email}", url.QueryEscape(cred.Email), 1)
 	url = strings.Replace(url, "{token}", emailToken, 1)
 
 	go func() {
 		err = sendEmail(url, e)
-		if err!=nil {
-			log.Printf("ERR-signup-07, send email failed: %v, %v\n", url, err);
+		if err != nil {
+			log.Printf("ERR-signup-07, send email failed: %v, %v\n", url, err)
 		}
 	}()
 
@@ -375,8 +376,6 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	forgetEmailToken := base32.StdEncoding.EncodeToString(rnd)
 
-
-
 	err = updateEmailForgotToken(email, forgetEmailToken)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
@@ -395,7 +394,7 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	textMessage := parseTemplate("template-plain-reset_"+lang(r)+".tmpl", other)
 	if textMessage == "" {
-		textMessage = "Click on this link " + opts.EmailLinkPrefix + "/confirm/reset/" + email+ "/" + forgetEmailToken
+		textMessage = "Click on this link " + opts.EmailLinkPrefix + "/confirm/reset/" + email + "/" + forgetEmailToken
 	}
 	htmlMessage := parseTemplate("template-html-reset_"+lang(r)+".tmpl", other)
 
@@ -406,13 +405,13 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 		HtmlMessage: htmlMessage,
 	}
 
-	url := strings.Replace(opts.UrlEmail, "{email}", email, 1)
+	url := strings.Replace(opts.EmailUrl, "{email}", email, 1)
 	url = strings.Replace(url, "{token}", forgetEmailToken, 1)
 
 	go func() {
 		err = sendEmail(url, e)
 		if err != nil {
-			log.Printf( "ERR-reset-email-04, send email failed: %v", url)
+			log.Printf("ERR-reset-email-04, send email failed: %v", url)
 		}
 	}()
 
@@ -430,16 +429,16 @@ func newPw(password string, version uint8) ([]byte, error) {
 		return nil, err
 	}
 
-	ret :=[]byte{version}
+	ret := []byte{version}
 	ret = append(ret, salt...)
 	ret = append(ret, calcPw...)
 	return ret, nil
 }
 
-func checkPw(checkPw string, encodedPw []byte) ([]byte, []byte, error){
+func checkPw(checkPw string, encodedPw []byte) ([]byte, []byte, error) {
 	key := encodedPw[0]
 	salt := encodedPw[1:17] //salt is always 128bit
-	storedPw := encodedPw[17:17+m[key].len]
+	storedPw := encodedPw[17 : 17+m[key].len]
 	calcPw, err := scrypt.Key([]byte(checkPw), salt, m[key].n, m[key].r, m[key].p, m[key].len)
 	return storedPw, calcPw, err
 }

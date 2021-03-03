@@ -70,7 +70,6 @@ type Credentials struct {
 	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
 	EmailTokenReset         string `json:"email_token_reset,omitempty" schema:"email_token_reset"`
-
 }
 
 type TokenClaims struct {
@@ -103,36 +102,36 @@ type OAuth struct {
 }
 
 type Opts struct {
-	Env            string
-	Dev            string
-	Issuer         string
-	Port           int
-	Ldap           int
-	DBPath         string
-	DBDriver       string
-	UrlEmail       string
-	EmailToken     string
+	Env             string
+	Dev             string
+	Issuer          string
+	Port            int
+	Ldap            int
+	DBPath          string
+	DBDriver        string
+	EmailUrl        string
+	EmailToken      string
 	EmailLinkPrefix string
-	UrlSms         string
-	SmsToken       string
-	Audience       string
-	ExpireAccess   int
-	ExpireRefresh  int
-	ExpireCode     int
-	HS256          string
-	EdDSA          string
-	RS256          string
-	OAuthUser      string
-	OAuthPass      string
-	ResetRefresh   bool
-	Users          string
-	UserEndpoints  bool
-	OauthEndpoints bool
-	LdapServer     bool
-	DetailedError  bool
-	Redirects      string
-	PasswordFlow   bool
-	Scope          string
+	UrlSms          string
+	SmsToken        string
+	Audience        string
+	ExpireAccess    int
+	ExpireRefresh   int
+	ExpireCode      int
+	HS256           string
+	EdDSA           string
+	RS256           string
+	OAuthUser       string
+	OAuthPass       string
+	ResetRefresh    bool
+	Users           string
+	UserEndpoints   bool
+	OauthEndpoints  bool
+	LdapServer      bool
+	DetailedError   bool
+	Redirects       string
+	PasswordFlow    bool
+	Scope           string
 }
 
 func NewOpts() *Opts {
@@ -153,7 +152,7 @@ func NewOpts() *Opts {
 		"./fastauth.db"), "DB path")
 	flag.StringVar(&opts.DBDriver, "db-driver", lookupEnv("DB_DRIVER",
 		"sqlite3"), "DB driver")
-	flag.StringVar(&opts.UrlEmail, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
+	flag.StringVar(&opts.EmailUrl, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.EmailToken, "email-token", lookupEnv("EMAIL_TOKEN"), "Email service token")
 	flag.StringVar(&opts.EmailLinkPrefix, "email-prefix", lookupEnv("EMAIL_PREFIX"), "Email link prefix")
 	flag.StringVar(&opts.UrlSms, "sms-url", lookupEnv("SMS_URL"), "SMS service URL")
@@ -196,8 +195,8 @@ func NewOpts() *Opts {
 		if opts.Issuer == "" {
 			opts.Issuer = "my-issuer"
 		}
-		if opts.UrlEmail == "" {
-			opts.UrlEmail = "http://localhost:8080/send/email/{email}/{token}"
+		if opts.EmailUrl == "" {
+			opts.EmailUrl = "http://localhost:8080/send/email/{email}/{token}"
 		}
 		if opts.UrlSms == "" {
 			opts.UrlSms = "http://localhost:8080/send/sms/{sms}/{token}"
@@ -581,7 +580,7 @@ func sendEmail(url string, e EmailRequest) error {
 		return err
 	}
 
-	req.Header.Add("Authorization", "Bearer " + opts.EmailToken)
+	req.Header.Add("Authorization", "Bearer "+opts.EmailToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.Do(req)
 	if err != nil {

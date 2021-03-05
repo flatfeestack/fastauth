@@ -73,7 +73,7 @@ type Credentials struct {
 }
 
 type TokenClaims struct {
-	Role     string `json:"role,omitempty"`
+	Meta     string `json:"meta,omitempty"`
 	Scope    string `json:"scope,omitempty"`
 	ClientID string `json:"client_id,omitempty"`
 	jwt.Claims
@@ -646,16 +646,29 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(role string, subject string, scope string, audience string, issuer string) (string, error) {
-	tokenClaims := &TokenClaims{
-		Role:  role,
-		Scope: scope,
-		Claims: jwt.Claims{
-			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
-			Subject:  subject,
-			Audience: []string{audience},
-			Issuer:   issuer,
-		},
+func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string) (string, error) {
+	var tokenClaims *TokenClaims
+	if meta != nil {
+		tokenClaims = &TokenClaims{
+			Meta:  *meta,
+			Scope: scope,
+			Claims: jwt.Claims{
+				Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
+				Subject:  subject,
+				Audience: []string{audience},
+				Issuer:   issuer,
+			},
+		}
+	} else {
+		tokenClaims = &TokenClaims{
+			Scope: scope,
+			Claims: jwt.Claims{
+				Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
+				Subject:  subject,
+				Audience: []string{audience},
+				Issuer:   issuer,
+			},
+		}
 	}
 	var sig jose.Signer
 	var err error
@@ -771,7 +784,7 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	encodedAccessToken, err := encodeAccessToken(string(result.meta), email, opts.Scope, opts.Audience, opts.Issuer)
+	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

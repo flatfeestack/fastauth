@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS auth (
 	email VARCHAR(64) PRIMARY KEY,
     inviteEmail VARCHAR(64),
-	password VARCHAR(49),
+	password VARCHAR(80),
 	refreshToken VARCHAR(32) NOT NULL,
 	emailToken VARCHAR(32),
 	forgetEmailToken VARCHAR(32),

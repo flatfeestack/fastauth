@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/base32"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,7 +13,7 @@ import (
 type dbRes struct {
 	sms          *string
 	password     []byte
-	meta         []byte
+	meta         *string
 	smsVerified  *int
 	totpVerified *int
 	refreshToken *string
@@ -24,27 +25,33 @@ type dbRes struct {
 
 func dbSelect(email string) (*dbRes, error) {
 	var res dbRes
+	var pw string
 	err := db.
 		QueryRow(`SELECT 
 					       sms, password, meta, refreshToken, emailToken, 
                            inviteEmail, totp, smsVerified, totpVerified, errorCount 
 					     FROM auth WHERE email = $1`, email).
-		Scan(&res.sms, &res.password, &res.meta, &res.refreshToken, &res.emailToken,
+		Scan(&res.sms, &pw, &res.meta, &res.refreshToken, &res.emailToken,
 			&res.inviteEmail, &res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
+	if err != nil {
+		return nil, err
+	}
+	res.password, err = base32.StdEncoding.DecodeString(pw)
 	if err != nil {
 		return nil, err
 	}
 	return &res, nil
 }
 
-func insertUser(email string, dk []byte, meta string, emailToken string, refreshToken string) error {
+func insertUser(email string, pwRaw []byte, meta string, emailToken string, refreshToken string) error {
+	pw := base32.StdEncoding.EncodeToString(pwRaw)
 	stmt, err := db.Prepare("INSERT INTO auth (email, password, meta, emailToken, refreshToken) VALUES ($1, $2, $3, $4, $5)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(email, dk, []byte(meta), emailToken, refreshToken)
+	res, err := stmt.Exec(email, pw, meta, emailToken, refreshToken)
 	err = handleErr(res, err, "INSERT INTO auth", email)
 	if err != nil {
 		return err
@@ -68,13 +75,14 @@ func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken st
 }
 
 func resetPasswordInvite(email string, emailToken string, newPw []byte) error {
+	pw := base32.StdEncoding.EncodeToString(newPw)
 	stmt, err := db.Prepare("UPDATE auth SET password = $1, emailToken = NULL WHERE email = $2 AND emailToken = $3")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(newPw, email, emailToken)
+	res, err := stmt.Exec(pw, email, emailToken)
 	err = handleErr(res, err, "UPDATE auth password invite", email)
 	if err != nil {
 		return err
@@ -83,13 +91,14 @@ func resetPasswordInvite(email string, emailToken string, newPw []byte) error {
 }
 
 func resetPassword(email string, forgetEmailToken string, newPw []byte) error {
+	pw := base32.StdEncoding.EncodeToString(newPw)
 	stmt, err := db.Prepare("UPDATE auth SET password = $1, totp = NULL, sms = NULL, forgetEmailToken = NULL WHERE email = $2 AND forgetEmailToken = $3")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
 	defer stmt.Close()
 
-	res, err := stmt.Exec(newPw, email, forgetEmailToken)
+	res, err := stmt.Exec(pw, email, forgetEmailToken)
 	err = handleErr(res, err, "UPDATE auth password", email)
 	if err != nil {
 		return err

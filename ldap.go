@@ -90,7 +90,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	e := ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
-	e.AddAttribute("cn", message.AttributeValue(string(dbRes.meta)))
+	e.AddAttribute("cn", message.AttributeValue(*dbRes.meta))
 	w.Write(e)
 
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)

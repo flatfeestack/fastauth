@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build make build test
 FROM alpine:3.13
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
-COPY --from=builder /app/login.html /app/banner.txt /app/fastauth /app/init.sql ./
+COPY --from=builder /app/login.html /app/banner.txt /app/fastauth /app/rmdb.sql /app/init.sql ./
 RUN chown -R appuser:appgroup /app
 USER appuser
 ENTRYPOINT ["./fastauth"]

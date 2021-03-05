@@ -269,19 +269,21 @@ func initDB() (*sql.DB, error) {
 
 	//this will create or alter tables
 	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
-	if _, err := os.Stat("init.sql"); err == nil {
-		file, err := ioutil.ReadFile("init.sql")
-		if err != nil {
-			return nil, err
-		}
-		requests := strings.Split(string(file), ";")
-		for _, request := range requests {
-			request = strings.Replace(request, "\n", "", -1)
-			request = strings.Replace(request, "\t", "", -1)
-			if !strings.HasPrefix(request, "#") {
-				_, err = db.Exec(request)
-				if err != nil {
-					return nil, fmt.Errorf("[%v] %v", request, err)
+	for _, v := range strings.Split(opts.DBScripts, ":") {
+		if _, err := os.Stat(v); err == nil {
+			file, err := ioutil.ReadFile(v)
+			if err != nil {
+				return nil, err
+			}
+			requests := strings.Split(string(file), ";")
+			for _, request := range requests {
+				request = strings.Replace(request, "\n", "", -1)
+				request = strings.Replace(request, "\t", "", -1)
+				if !strings.HasPrefix(request, "#") {
+					_, err = db.Exec(request)
+					if err != nil {
+						return nil, fmt.Errorf("[%v] %v", request, err)
+					}
 				}
 			}
 		}

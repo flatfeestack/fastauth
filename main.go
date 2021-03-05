@@ -109,6 +109,7 @@ type Opts struct {
 	Ldap            int
 	DBPath          string
 	DBDriver        string
+	DBScripts       string
 	EmailUrl        string
 	EmailToken      string
 	EmailLinkPrefix string
@@ -152,6 +153,8 @@ func NewOpts() *Opts {
 		"./fastauth.db"), "DB path")
 	flag.StringVar(&opts.DBDriver, "db-driver", lookupEnv("DB_DRIVER",
 		"sqlite3"), "DB driver")
+	flag.StringVar(&opts.DBScripts, "db-scripts", lookupEnv("DB_SCRIPTS",
+		"rmdb.sql:init.sql"), "DB scripts to run at startup")
 	flag.StringVar(&opts.EmailUrl, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.EmailToken, "email-token", lookupEnv("EMAIL_TOKEN"), "Email service token")
 	flag.StringVar(&opts.EmailLinkPrefix, "email-prefix", lookupEnv("EMAIL_PREFIX"), "Email link prefix")

@@ -122,6 +122,36 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 	w.Write(oauthEnc)
 }
 
+func invitations(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
+	invites, err := dbInvitations(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+
+	oauthEnc, err := json.Marshal(invites)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+		return
+	}
+	w.Write(oauthEnc)
+}
+
+func inviteDel(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	vars := mux.Vars(r)
+	email, err := url.QueryUnescape(vars["email"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+	err = delInvite(claims.Subject, email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	buf, _ := ioutil.ReadAll(r.Body)
 	rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
@@ -157,7 +187,7 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	err = insertUser(e.Email, nil, "USR", emailToken, refreshToken)
+	err = insertUser(e.Email, nil, nil, emailToken, refreshToken, &e.InviteEmail)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -172,11 +202,12 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 
 	subject := parseTemplate("template-subject-signup_"+lang(r)+".tmpl", other)
 	if subject == "" {
-		subject = "Validate your email"
+		subject = "You have been invited, activate your account"
 	}
 	textMessage := parseTemplate("template-plain-signup_"+lang(r)+".tmpl", other)
 	if textMessage == "" {
-		textMessage = "Click on this link " + opts.EmailLinkPrefix + "/invite/" + url.QueryEscape(e.Email) + "/" + emailToken + "/" + e.InviteEmail
+		textMessage = "Click on this link " + opts.EmailLinkPrefix +
+			"/confirm/invite/" + url.QueryEscape(e.Email) + "/" + emailToken + "/" + url.QueryEscape(e.InviteEmail) + "/"
 	}
 	htmlMessage := parseTemplate("template-html-signup_"+lang(r)+".tmpl", other)
 
@@ -250,7 +281,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = insertUser(cred.Email, calcPw, "USR", emailToken, refreshToken)
+	err = insertUser(cred.Email, calcPw, nil, emailToken, refreshToken, nil)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
 		return

@@ -481,6 +481,8 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/signup", signup).Methods("POST")
 		router.HandleFunc("/invite", jwtAuth(invite)).Methods("POST")
+		router.HandleFunc("/invite/{email}", jwtAuth(inviteDel)).Methods("DELETE")
+		router.HandleFunc("/invites", jwtAuth(invitations)).Methods("GET")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods("Post")
@@ -755,12 +757,11 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
  but not returned to the user, so the user has to login to get the refresh token
 */
 func resetRefreshToken(oldToken string, email string) (string, error) {
-	rnd, err := genRnd(16)
+	newToken, err := genToken()
 	if err != nil {
 		return "", err
 	}
-	newToken := base32.StdEncoding.EncodeToString(rnd)
-	err = updateRefreshToken(oldToken, newToken, email)
+	err = updateRefreshToken(email, oldToken, newToken)
 	if err != nil {
 		return "", err
 	}

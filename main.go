@@ -69,7 +69,7 @@ type Credentials struct {
 	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
 	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
-	EmailTokenReset         string `json:"email_token_reset,omitempty" schema:"email_token_reset"`
+	EmailToken              string `json:"email_token,omitempty" schema:"email_token"`
 }
 
 type TokenClaims struct {
@@ -412,7 +412,7 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 		return nil, "not-found", fmt.Errorf("ERR-checkEmail-01, DB select, %v err %v", email, err)
 	}
 
-	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
+	if result.emailToken != nil {
 		return nil, "blocked", fmt.Errorf("ERR-checkEmail-02, user %v no email verified: %v", email, err)
 	}
 
@@ -477,10 +477,12 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/login", login).Methods("POST")
 		router.HandleFunc("/refresh", refresh).Methods("POST")
 		router.HandleFunc("/signup", signup).Methods("POST")
+		router.HandleFunc("/invite", jwtAuth(invite)).Methods("POST")
 		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods("Post")
 		router.HandleFunc("/confirm/reset", confirmReset).Methods("POST")
+		router.HandleFunc("/confirm/invite", confirmInvite).Methods("POST")
 
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods("POST")
 		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods("POST")
@@ -502,7 +504,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 	if opts.OauthEndpoints {
 		router.HandleFunc("/oauth/login", login).Methods("POST")
 		router.HandleFunc("/oauth/token", oauth).Methods("POST")
-		router.HandleFunc("/oauth/revoke", revoke).Methods("POST")
+		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods("POST")
 		router.HandleFunc("/oauth/authorize", authorize).Methods("GET")
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
 
@@ -549,6 +551,14 @@ func genRnd(n int) ([]byte, error) {
 	}
 
 	return b, nil
+}
+
+func genToken() (string, error) {
+	rnd, err := genRnd(20)
+	if err != nil {
+		return "", err
+	}
+	return base32.StdEncoding.EncodeToString(rnd), nil
 }
 
 func writeErr(w http.ResponseWriter, code int, error string, detailError string, format string, a ...interface{}) {
@@ -728,13 +738,13 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
  This function is also used in case of revoking a token, where a new token is created,
  but not returned to the user, so the user has to login to get the refresh token
 */
-func resetRefreshToken(oldToken string) (string, error) {
+func resetRefreshToken(oldToken string, email string) (string, error) {
 	rnd, err := genRnd(16)
 	if err != nil {
 		return "", err
 	}
 	newToken := base32.StdEncoding.EncodeToString(rnd)
-	err = updateRefreshToken(oldToken, newToken)
+	err = updateRefreshToken(oldToken, newToken, email)
 	if err != nil {
 		return "", err
 	}
@@ -747,7 +757,7 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", email, err)
 	}
 
-	if result.emailVerified == nil || result.emailVerified.Unix() == 0 {
+	if result.emailToken != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", email, err)
 	}
 
@@ -765,7 +775,7 @@ func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
 
 	refreshToken := *result.refreshToken
 	if opts.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken)
+		refreshToken, err = resetRefreshToken(refreshToken, email)
 		if err != nil {
 			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
 		}

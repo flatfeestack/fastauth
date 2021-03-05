@@ -78,7 +78,7 @@ func TestSignupTwice(t *testing.T) {
 	bodyString := string(bodyBytes)
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.True(t, strings.Index(bodyString, "ERR-signup-06") > 0)
+	assert.True(t, strings.Index(bodyString, "ERR-signup-07") > 0)
 
 	resp.Body.Close()
 	shutdown()
@@ -99,7 +99,7 @@ func TestSignupWrong(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	log.Println(bodyString)
-	assert.True(t, strings.Index(bodyString, "ERR-signup-06") > 0)
+	assert.True(t, strings.Index(bodyString, "ERR-signup-07") > 0)
 
 	resp.Body.Close()
 	shutdown()
@@ -323,10 +323,10 @@ func doAllTOTP(token string) *gotp.TOTP {
 }
 
 func doConfirmReset(email string, token string, password string) *http.Response {
-	data := Credentials {
-		Email: email,
-		Password: password,
-		EmailTokenReset: token,
+	data := Credentials{
+		Email:      email,
+		Password:   password,
+		EmailToken: token,
 	}
 	payloadBytes, _ := json.Marshal(data)
 	body := bytes.NewReader(payloadBytes)

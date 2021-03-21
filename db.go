@@ -360,7 +360,7 @@ func setupDB() {
 				if err == nil {
 					log.Printf("insterted user %v", userPwMeta[0])
 				} else {
-					log.Printf("could not insert %v", userPwMeta[0])
+					log.Printf("could not insert %v: %v", userPwMeta[0], err)
 				}
 			} else if len(userPwMeta) == 3 {
 				meta := userPwMeta[2]
@@ -368,7 +368,7 @@ func setupDB() {
 				if err == nil {
 					log.Printf("insterted user %v", userPwMeta[0])
 				} else {
-					log.Printf("could not insert %v", userPwMeta[0])
+					log.Printf("could not insert %v: %v", userPwMeta[0], err)
 				}
 			} else {
 				log.Printf("username and password need to be seperated by ':'")

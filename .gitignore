@@ -5,3 +5,4 @@ fastauth
 example-tokenizer/tokenizer
 example-mail/mailer
 example-upload/fileupload
+example-hello/hello

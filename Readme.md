@@ -28,7 +28,7 @@ The token will use RS256, to use HS256, start fastauth as follows:
 ./fastauth -dev test -rs256 false -ed256 false
 ```
 
-You should see in your browsel the access token:
+You should see in your browser the access token:
 
 ```
 {"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsibXktYXVkaWVuY2UiXSwiZXhwIjoxNjE2MzMxNTI3LCJpc3MiOiJteS1pc3N1ZXIiLCJzY29wZSI6Im15LXNjb3BlIiwic3ViIjoidXNlciJ9.NPZGkhGdH-mXjJ1mIhCvdnJab27EqPS5KRpDigfBXLs",

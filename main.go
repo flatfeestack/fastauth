@@ -677,7 +677,7 @@ func encodeAccessToken(meta *string, subject string, scope string, audience stri
 	if opts.RS256 != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
 	} else if opts.EdDSA != "" {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
 	}
@@ -704,7 +704,7 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	if opts.RS256 != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
 	} else if opts.EdDSA != "" {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
 	}
@@ -732,7 +732,7 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
 	if opts.RS256 != "" {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
 	} else if opts.EdDSA != "" {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
 	}

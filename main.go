@@ -73,9 +73,8 @@ type Credentials struct {
 }
 
 type TokenClaims struct {
-	Meta     string `json:"meta,omitempty"`
-	Scope    string `json:"scope,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
+	Meta  string `json:"meta,omitempty"`
+	Scope string `json:"scope,omitempty"`
 	jwt.Claims
 }
 type RefreshClaims struct {

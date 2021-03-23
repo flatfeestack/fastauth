@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base32"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -59,7 +60,7 @@ func dbInvitations(email string) ([]dbInvite, error) {
 	case sql.ErrNoRows:
 		return nil, nil
 	case nil:
-		defer rows.Close()
+		defer closeAndLog(rows)
 		for rows.Next() {
 			var inv dbInvite
 			var token *string
@@ -81,7 +82,7 @@ func delInvite(inviteEmail string, email string) error {
 	if err != nil {
 		return fmt.Errorf("prepare DELETE auth pending status for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email, inviteEmail)
 	err = handleErr(res, err, "DELETE auth errorCount", email)
@@ -97,7 +98,7 @@ func insertUser(email string, pwRaw []byte, meta *string, emailToken string, ref
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email, pw, meta, emailToken, refreshToken, inviteEmail)
 	err = handleErr(res, err, "INSERT INTO auth", email)
@@ -112,7 +113,7 @@ func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken st
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE refreshTokenfor statement failed: %v", err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(newRefreshToken, oldRefreshToken, email)
 	err = handleErr(res, err, "UPDATE refreshToken", "n/a")
@@ -128,7 +129,7 @@ func resetPasswordInvite(email string, emailToken string, newPw []byte) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(pw, email, emailToken)
 	err = handleErr(res, err, "UPDATE auth password invite", email)
@@ -144,7 +145,7 @@ func resetPassword(email string, forgetEmailToken string, newPw []byte) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(pw, email, forgetEmailToken)
 	err = handleErr(res, err, "UPDATE auth password", email)
@@ -160,7 +161,7 @@ func updateEmailForgotToken(email string, token string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth forgetEmailToken for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(token, email)
 	err = handleErr(res, err, "UPDATE auth forgetEmailToken", email)
@@ -175,7 +176,7 @@ func updateTOTP(email string, totp string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth totp for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(totp, email)
 	err = handleErr(res, err, "UPDATE auth totp", email)
@@ -190,7 +191,7 @@ func updateSMS(email string, totp string, sms string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth totp for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(totp, sms, email)
 	err = handleErr(res, err, "UPDATE auth totp", email)
@@ -205,7 +206,7 @@ func updateEmailToken(email string, token string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email, token)
 	err = handleErr(res, err, "UPDATE auth", email)
@@ -220,7 +221,7 @@ func updateSMSVerified(email string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email)
 	err = handleErr(res, err, "UPDATE auth SMS timestamp", email)
@@ -235,7 +236,7 @@ func updateTOTPVerified(email string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email)
 	err = handleErr(res, err, "UPDATE auth totp timestamp", email)
@@ -250,7 +251,7 @@ func incErrorCount(email string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth status for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email)
 	err = handleErr(res, err, "UPDATE auth errorCount", email)
@@ -265,7 +266,7 @@ func resetCount(email string) error {
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth status for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email)
 	err = handleErr(res, err, "UPDATE auth status", email)
@@ -280,7 +281,7 @@ func insertAudit(email string, action string) error {
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO audit for %v statement failed: %v", email, err)
 	}
-	defer stmt.Close()
+	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email, action)
 	return handleErr(res, err, "INSERT INTO audit", email)
@@ -374,5 +375,12 @@ func setupDB() {
 				log.Printf("username and password need to be seperated by ':'")
 			}
 		}
+	}
+}
+
+func closeAndLog(c io.Closer) {
+	err := c.Close()
+	if err != nil {
+		log.Printf("could not close: %v", err)
 	}
 }

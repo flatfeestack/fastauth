@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type EmailRequest struct {
@@ -35,9 +37,10 @@ type EmailToken struct {
 }
 
 type EmailInvite struct {
-	Email       string `json:"email"`
-	InviteEmail string `json:"invite_email"`
-	Org         string `json:"org"`
+	Email       string    `json:"email"`
+	InviteEmail string    `json:"invite_email"`
+	InvitedAt   time.Time `json:"invited_at"`
+	Org         string    `json:"org"`
 }
 
 type scryptParam struct {
@@ -122,6 +125,21 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 	w.Write(oauthEnc)
 }
 
+//don't forget to refresh the token, this updates the token content
+func inviteResetMyToken(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
+	inviteToken, err := genToken()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", claims.Subject, err)
+		return
+	}
+	err = updateInviteToken(claims.Subject, inviteToken)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func invitations(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	invites, err := dbInvitations(claims.Subject)
 	if err != nil {
@@ -137,14 +155,60 @@ func invitations(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	w.Write(oauthEnc)
 }
 
-func inviteDel(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+func inviteMyUpdate(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-	err = delInvite(claims.Subject, email)
+	token, err := url.QueryUnescape(vars["token"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+	date, err := url.QueryUnescape(vars["date"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+	other, err := dbSelect(email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+
+	decoded, err := base32.StdEncoding.DecodeString(token)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+
+	//hardcode version to 0
+	decoded[0] = 0
+	//token is contributor email, validity date, sponsor email
+	storedPw, calcPw, err := checkPw(claims.Subject+date+other.inviteToken, decoded)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+	if bytes.Compare(calcPw, storedPw) != 0 {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+
+	layout := "2006-01-02"
+	t, err := time.Parse(layout, date)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	if t.Add(time.Second * time.Duration(opts.ExpireInvite)).Before(timeNow()) {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+
+	err = updateInvite(claims.Subject, email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -152,7 +216,47 @@ func inviteDel(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+func inviteOtherDelete(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	//delete the invite from me of other users
+	vars := mux.Vars(r)
+	email, err := url.QueryUnescape(vars["email"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+	err = deleteInvite(claims.Subject, email, claims.InviteToken)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func inviteMyDelete(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
+	err := deleteMyInvite(claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func inviteOtherDeletePending(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	vars := mux.Vars(r)
+	email, err := url.QueryUnescape(vars["email"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		return
+	}
+	err = deletePendingInvite(email, claims.Subject)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	buf, _ := ioutil.ReadAll(r.Body)
 	rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
 	rdr2 := ioutil.NopCloser(bytes.NewBuffer(buf))
@@ -186,8 +290,13 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", e.Email, err)
 		return
 	}
+	inviteToken, err := genToken()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", e.Email, err)
+		return
+	}
 
-	err = insertUser(e.Email, nil, nil, emailToken, refreshToken, &e.InviteEmail)
+	err = insertUser(e.Email, nil, nil, emailToken, refreshToken, inviteToken, &e.InviteEmail, &e.InvitedAt)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -280,8 +389,13 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-06, key %v error: %v", cred.Email, err)
 		return
 	}
+	inviteToken, err := genToken()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", cred.Email, err)
+		return
+	}
 
-	err = insertUser(cred.Email, calcPw, nil, emailToken, refreshToken, nil)
+	err = insertUser(cred.Email, calcPw, nil, emailToken, refreshToken, inviteToken, nil, nil)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
 		return
@@ -390,7 +504,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//SMS logic
-	if result.totp != nil && result.sms != nil && result.smsVerified != nil {
+	if result.totp != nil && result.sms != nil && result.smsVerified > 0 {
 		totp := newTOTP(*result.totp)
 		token := totp.Now()
 		if cred.TOTP == "" {
@@ -410,7 +524,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//TOTP logic
-	if result.totp != nil && result.totpVerified != nil {
+	if result.totp != nil && result.totpVerified > 0 {
 		totp := newTOTP(*result.totp)
 		token := totp.Now()
 		if token != cred.TOTP {
@@ -429,7 +543,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
 		w.WriteHeader(303)
 	} else {
-		refreshToken, err := resetRefreshToken(*result.refreshToken, cred.Email)
+		refreshToken, err := resetRefreshToken(result.refreshToken, cred.Email)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-15, cannot reset refresh token %v", err)
 			return
@@ -1022,7 +1136,7 @@ func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	refreshToken := *result.refreshToken
+	refreshToken := result.refreshToken
 	_, err = resetRefreshToken(refreshToken, claims.Subject)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")

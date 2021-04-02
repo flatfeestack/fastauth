@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS auth (
 	refreshToken VARCHAR(32) NOT NULL,
 	emailToken VARCHAR(32),
 	forgetEmailToken VARCHAR(32),
+	inviteToken VARCHAR(32),
+    invitedAt TIMESTAMP,
     sms VARCHAR(16),
     smsVerified INT DEFAULT 0,
 	totp VARCHAR(64),

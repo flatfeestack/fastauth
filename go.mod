@@ -1,14 +1,13 @@
 module fastauth
 
-go 1.13
+go 1.16
 
 require (
-	github.com/dimiro1/banner v1.0.0
+	github.com/dimiro1/banner v1.1.0
 	github.com/domodwyer/mailyak/v3 v3.3.1
 	github.com/felixge/httpsnoop v1.0.1
 	github.com/go-ldap/ldap/v3 v3.2.3
 	github.com/google/go-cmp v0.5.2 // indirect
-	github.com/gorilla/handlers v1.5.1
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/schema v1.2.0
 	github.com/joho/godotenv v1.3.0

@@ -37,10 +37,9 @@ type EmailToken struct {
 }
 
 type EmailInvite struct {
-	Email       string    `json:"email"`
-	InviteEmail string    `json:"invite_email"`
-	InvitedAt   time.Time `json:"invited_at"`
-	Org         string    `json:"org"`
+	Email     string    `json:"email"`
+	InvitedAt time.Time `json:"invited_at"`
+	Org       string    `json:"org"`
 }
 
 type scryptParam struct {
@@ -69,7 +68,7 @@ func confirmEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := dbSelect(email)
+	result, err := findAuthByEmail(email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-02, update email token for %v failed, token %v: %v", email, token, err)
 		return
@@ -104,7 +103,7 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := dbSelect(et.Email)
+	result, err := findAuthByEmail(et.Email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-02, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
 		return
@@ -141,7 +140,7 @@ func inviteResetMyToken(w http.ResponseWriter, _ *http.Request, claims *TokenCla
 }
 
 func invitations(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
-	invites, err := dbInvitations(claims.Subject)
+	invites, err := findInvitationsByEmail(claims.Subject)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -155,7 +154,7 @@ func invitations(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	w.Write(oauthEnc)
 }
 
-func inviteMyUpdate(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+func inviteAccept(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
@@ -172,7 +171,7 @@ func inviteMyUpdate(w http.ResponseWriter, r *http.Request, claims *TokenClaims)
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-	other, err := dbSelect(email)
+	other, err := findAuthByEmail(email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
@@ -184,8 +183,6 @@ func inviteMyUpdate(w http.ResponseWriter, r *http.Request, claims *TokenClaims)
 		return
 	}
 
-	//hardcode version to 0
-	decoded[0] = 0
 	//token is contributor email, validity date, sponsor email
 	storedPw, calcPw, err := checkPw(claims.Subject+date+other.inviteToken, decoded)
 	if err != nil {
@@ -208,7 +205,7 @@ func inviteMyUpdate(w http.ResponseWriter, r *http.Request, claims *TokenClaims)
 		return
 	}
 
-	err = updateInvite(claims.Subject, email)
+	err = insertInvite(claims.Subject, email, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -224,7 +221,7 @@ func inviteOtherDelete(w http.ResponseWriter, r *http.Request, claims *TokenClai
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-	err = deleteInvite(claims.Subject, email, claims.InviteToken)
+	err = deleteInvite(email, claims.Subject)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -232,23 +229,14 @@ func inviteOtherDelete(w http.ResponseWriter, r *http.Request, claims *TokenClai
 	w.WriteHeader(http.StatusOK)
 }
 
-func inviteMyDelete(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
-	err := deleteMyInvite(claims.Subject)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func inviteOtherDeletePending(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+func inviteMyDelete(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	email, err := url.QueryUnescape(vars["email"])
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-	err = deletePendingInvite(email, claims.Subject)
+	err = deleteInvite(claims.Subject, email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -274,12 +262,6 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	err = validateEmail(e.InviteEmail)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-03, email is wrong %v", err)
-		return
-	}
-
 	emailToken, err := genToken()
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", e.Email, err)
@@ -296,7 +278,13 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	err = insertUser(e.Email, nil, nil, emailToken, refreshToken, inviteToken, &e.InviteEmail, &e.InvitedAt)
+	err = insertUser(e.Email, nil, nil, emailToken, refreshToken, inviteToken, timeNow())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+
+	err = insertInvite(e.Email, claims.Subject, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 		return
@@ -314,9 +302,15 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		subject = "You have been invited, activate your account"
 	}
 	textMessage := parseTemplate("template-plain-signup_"+lang(r)+".tmpl", other)
+
+	encInvToken, err := newPw(e.Email+e.InvitedAt.Format("2006-01-02")+claims.InviteToken, 0)
+
 	if textMessage == "" {
 		textMessage = "Click on this link " + opts.EmailLinkPrefix +
-			"/confirm/invite/" + url.QueryEscape(e.Email) + "/" + emailToken + "/" + url.QueryEscape(e.InviteEmail) + "/"
+			"/confirm/invite/" + url.QueryEscape(e.Email) +
+			"/" + url.QueryEscape(claims.Subject) +
+			"/" + e.InvitedAt.Format("2006-01-02") +
+			"/" + base32.StdEncoding.EncodeToString(encInvToken)
 	}
 	htmlMessage := parseTemplate("template-html-signup_"+lang(r)+".tmpl", other)
 
@@ -337,13 +331,7 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		}
 	}()
 
-	err = insertAudit(e.Email, "MAIL_SENT")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-08, db update failed: %v", err)
-		return
-	}
 	w.WriteHeader(http.StatusOK)
-
 }
 
 func signup(w http.ResponseWriter, r *http.Request) {
@@ -395,7 +383,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = insertUser(cred.Email, calcPw, nil, emailToken, refreshToken, inviteToken, nil, nil)
+	err = insertUser(cred.Email, calcPw, nil, emailToken, refreshToken, inviteToken, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
 		return
@@ -435,11 +423,6 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	err = insertAudit(cred.Email, "MAIL_SENT")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-09, db update failed: %v", err)
-		return
-	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -504,7 +487,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//SMS logic
-	if result.totp != nil && result.sms != nil && result.smsVerified > 0 {
+	if result.totp != nil && result.sms != nil && result.smsVerified != nil {
 		totp := newTOTP(*result.totp)
 		token := totp.Now()
 		if cred.TOTP == "" {
@@ -524,7 +507,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//TOTP logic
-	if result.totp != nil && result.totpVerified > 0 {
+	if result.totp != nil && result.totpVerified != nil {
 		totp := newTOTP(*result.totp)
 		token := totp.Now()
 		if token != cred.TOTP {
@@ -595,7 +578,7 @@ func displaySMS(_ http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("decoding error %v", err)
 	}
-	fmt.Printf("Sent to NR %s token [%s]\n", sms, token)
+	fmt.Printf("Send token [%s] to NR %s\n", token, sms)
 }
 
 func resetEmail(w http.ResponseWriter, r *http.Request) {
@@ -702,16 +685,16 @@ func confirmGeneric(w http.ResponseWriter, r *http.Request, invite bool) {
 	}
 
 	if invite {
-		err = resetPasswordInvite(cred.Email, cred.EmailToken, calcPw)
+		err = updatePasswordInvite(cred.Email, cred.EmailToken, calcPw)
 	} else {
-		err = resetPassword(cred.Email, cred.EmailToken, calcPw)
+		err = updatePasswordForgot(cred.Email, cred.EmailToken, calcPw)
 	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
 		return
 	}
 
-	result, err := dbSelect(cred.Email)
+	result, err := findAuthByEmail(cred.Email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-08, update email token for %v failed, token %v: %v", cred.Email, cred.EmailToken, err)
 		return
@@ -762,7 +745,7 @@ func confirmTOTP(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	result, err := dbSelect(claims.Subject)
+	result, err := findAuthByEmail(claims.Subject)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-02, DB select, %v err %v", claims.Subject, err)
 		return
@@ -773,7 +756,7 @@ func confirmTOTP(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-03, token different, %v err %v", claims.Subject, err)
 		return
 	}
-	err = updateTOTPVerified(claims.Subject)
+	err = updateTOTPVerified(claims.Subject, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-totp-04, DB select, %v err %v", claims.Subject, err)
 		return
@@ -824,7 +807,7 @@ func confirmSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	result, err := dbSelect(claims.Subject)
+	result, err := findAuthByEmail(claims.Subject)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-sms-02, DB select, %v err %v", claims.Subject, err)
 		return
@@ -835,7 +818,7 @@ func confirmSMS(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-confirm-sms-03, token different, %v err %v", claims.Subject, err)
 		return
 	}
-	err = updateSMSVerified(claims.Subject)
+	err = updateSMSVerified(claims.Subject, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-sms-04, update sms failed, %v err %v", claims.Subject, err)
 		return
@@ -1003,7 +986,7 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		result, err := dbSelect(cc.Subject)
+		result, err := findAuthByEmail(cc.Subject)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-oauth-06 %v", err)
 			return
@@ -1090,16 +1073,7 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 //https://tools.ietf.org/html/rfc6749#section-1.3.1
 //https://developer.okta.com/blog/2019/08/22/okta-authjs-pkce
 func authorize(w http.ResponseWriter, r *http.Request) {
-	responseType, err := param("response_type", r)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-06 %v", err)
-		return
-	}
-	if responseType == "code" {
-		http.ServeFile(w, r, "login.html")
-		return
-	}
-	writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
+	http.ServeFile(w, r, "login.html")
 }
 
 func revoke(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
@@ -1130,7 +1104,7 @@ func revoke(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 }
 
 func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
-	result, err := dbSelect(claims.Subject)
+	result, err := findAuthByEmail(claims.Subject)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-oauth-06 %v", err)
 		return

@@ -1,10 +1,10 @@
 # FastAuth
 
-This is a simple authentication server that can also be used for local development 
+This is an authentication server that can also be used for local development 
 with reasonable defaults to kickstart the local development. This server is meant to 
 run standalone and handle JWT tokens. It partially supports OAuth.
 
-The default server DB is sqlite (PostgreSQL is supported). The password is protected
+The default server DB is sqlite and PostgreSQL. The password is hashed
 with scrypt and for token generation, HS256, RS256 and Ed25519 is supported.
 
 ## Setup
@@ -21,11 +21,11 @@ To run with reasonable dev settings, execute:
 ```
 
 This inserts the user with the name "user" and the password "pass". 
-For **non** PKCE flow, open in browser [http://localhost:8080/oauth/authorize?response_type=code](http://localhost:8080/oauth/authorize?response_type=code). 
-The token will use RS256, to use HS256, start fastauth as follows:
+For **non** PKCE flow, open in browser [http://localhost:8080/oauth/authorize](http://localhost:8080/oauth/authorize). 
+The token will use HS256, to use a RS256 private key, start fastauth as follows:
 
 ```
-./fastauth -dev test -rs256 false -ed256 false
+./fastauth -dev myhs256pw -rs256 true
 ```
 
 You should see in your browser the access token:
@@ -51,12 +51,12 @@ curl -H 'Accept: application/json' -H "Authorization: Bearer ${TOKEN}" http://lo
 
 For the PKCE flow add the following parameters:
 
-[http://localhost:8080/oauth/authorize?response_type=code&code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256](http://localhost:8080/oauth/authorize?response_type=code&code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256).
+[http://localhost:8080/oauth/authorize?code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256](http://localhost:8080/oauth/authorize?code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256).
 
 In this example, we have the code verifier: HalloDasIstEinTest123456789012345678901234567890 and the
 challenge: fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco ([test it here](https://tonyxu-io.github.io/pkce-generator/)).
 
-This will give us the authorization code, than we need to confirm. Copy the code from the browser. 
+This will give us the authorization code, that we need to confirm. Copy the code from the browser. 
 To not have the user involved, a redirect is done (not in this example).
 
 Now, we need to confirm the code with the verifier (copy from the browser):
@@ -69,6 +69,8 @@ curl -X POST -H 'Accept: application/json' --data 'grant_type=authorization_code
 And we will get the access and refresh token
 
 # Run with docker
+
+To run fastauth within docker, run:
 
 ```
 docker build -t fastauth .

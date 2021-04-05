@@ -13,18 +13,17 @@ import (
 )
 
 type dbRes struct {
-	sms          *string
 	password     []byte
-	meta         *string
-	smsVerified  int
-	totpVerified int
 	refreshToken string
 	emailToken   *string
 	inviteToken  string
-	inviteEmail  *string
-	invitedAt    *time.Time
+	sms          *string
+	smsVerified  *time.Time
 	totp         *string
+	totpVerified *time.Time
 	errorCount   int
+	meta         *string
+	inviteEmails *string
 }
 
 type dbInvite struct {
@@ -33,16 +32,20 @@ type dbInvite struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func dbSelect(email string) (*dbRes, error) {
+func findAuthByEmail(email string) (*dbRes, error) {
 	var res dbRes
 	var pw string
-	err := db.
-		QueryRow(`SELECT 
-					       sms, password, meta, refreshToken, emailToken, inviteToken,
-                           inviteEmail, invitedAt, totp, smsVerified, totpVerified, errorCount 
-					     FROM auth WHERE email = $1`, email).
-		Scan(&res.sms, &pw, &res.meta, &res.refreshToken, &res.emailToken, &res.inviteToken,
-			&res.inviteEmail, &res.invitedAt, &res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
+	query := `SELECT a.sms, a.password, a.meta, a.refresh_token, a.email_token, 
+                     a.invite_token, a.totp, a.sms_verified, a.totp_verified, 
+                     a.error_count, 
+                     (SELECT ` + agg("i.invite_email") + ` 
+                      FROM invite i 
+                      WHERE i.email=a.email) as invite_emails
+			  FROM auth a
+              WHERE a.email = $1`
+	err := db.QueryRow(query, email).Scan(
+		&res.sms, &pw, &res.meta, &res.refreshToken, &res.emailToken, &res.inviteToken,
+		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount, &res.inviteEmails)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +56,12 @@ func dbSelect(email string) (*dbRes, error) {
 	return &res, nil
 }
 
-func dbInvitations(email string) ([]dbInvite, error) {
+func findInvitationsByEmail(email string) ([]dbInvite, error) {
 	var res []dbInvite
-	query := "SELECT email, emailToken, created_at FROM auth WHERE inviteEmail=$1"
+	query := `SELECT i.email, a.email_token, i.created_at 
+              FROM invite i 
+                  INNER JOIN auth a ON i.email = a.email 
+              WHERE i.invite_email=$1`
 	rows, err := db.Query(query, email)
 
 	switch err {
@@ -65,9 +71,9 @@ func dbInvitations(email string) ([]dbInvite, error) {
 		defer closeAndLog(rows)
 		for rows.Next() {
 			var inv dbInvite
-			var token *string
-			err = rows.Scan(&inv.Email, &token, &inv.CreatedAt)
-			inv.Pending = token != nil
+			var emailToken *string
+			err = rows.Scan(&inv.Email, &emailToken, &inv.CreatedAt)
+			inv.Pending = emailToken != nil
 			if err != nil {
 				return nil, err
 			}
@@ -79,158 +85,97 @@ func dbInvitations(email string) ([]dbInvite, error) {
 	}
 }
 
-func deleteInvite(myEmail string, otherEmail string, emailToken string) error {
-	stmt, err := db.Prepare("UPDATE auth SET inviteEmail = NULL WHERE email = $1 AND inviteEmail = $2 AND inviteToken = $3")
+func deleteInvite(myEmail string, inviteEmail string) error {
+	stmt, err := db.Prepare("DELETE FROM invite WHERE email = $1 AND invite_email = $2")
 	if err != nil {
-		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", myEmail, err)
+		return fmt.Errorf("prepare DELETE FROM invite %v statement failed: %v", myEmail, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(otherEmail, myEmail, emailToken)
-	err = handleErr(res, err, "UPDATE auth", myEmail)
-	if err != nil {
-		return err
-	}
-	return insertAudit(myEmail+"/"+otherEmail, "DEL_OTHER_INVITE")
-}
-
-func deleteMyInvite(email string) error {
-	stmt, err := db.Prepare("UPDATE auth SET inviteEmail = NULL WHERE email = $1")
-	if err != nil {
-		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
-	}
-	defer closeAndLog(stmt)
-
-	res, err := stmt.Exec(email)
-	err = handleErr(res, err, "UPDATE auth", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "DEL_MY_INVITE")
-}
-
-func deletePendingInvite(email string, inviteEmail string) error {
-	stmt, err := db.Prepare("DELETE from auth WHERE email = $1 AND inviteEmail = $2 AND emailToken IS NOT NULL")
-	if err != nil {
-		return fmt.Errorf("prepare DELETE auth pending status for %v statement failed: %v", email, err)
-	}
-	defer closeAndLog(stmt)
-
-	res, err := stmt.Exec(email, inviteEmail)
-	err = handleErr(res, err, "DELETE auth errorCount", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "DEL_INVITE")
+	res, err := stmt.Exec(myEmail, inviteEmail)
+	return handleErr(res, err, "DELETE invite", myEmail)
 }
 
 func updateInviteToken(email string, inviteToken string) error {
-	stmt, err := db.Prepare(`UPDATE auth SET inviteToken = $1 WHERE email = $2`)
+	stmt, err := db.Prepare(`UPDATE auth SET invite_token = $1 WHERE email = $2`)
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE inviteToken for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(inviteToken, email)
-	err = handleErr(res, err, "UPDATE inviteToken", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "UPDATE_MY_INVITE_TOKEN")
+	return handleErr(res, err, "UPDATE inviteToken", email)
 }
 
-func updateInvite(email string, inviteEmail string) error {
-	stmt, err := db.Prepare(`UPDATE auth SET inviteEmail = $1 WHERE email = $2`)
+func insertInvite(email string, inviteEmail string, now time.Time) error {
+	stmt, err := db.Prepare("INSERT INTO invite (email, invite_email, created_at) VALUES ($1, $2, $3)")
 	if err != nil {
-		return fmt.Errorf("prepare UPDATE me for %v statement failed: %v", email, err)
+		return fmt.Errorf("prepare INSERT INTO invite for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(inviteEmail, email)
-	err = handleErr(res, err, "UPDATE me", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "UPDATE_MY_INVITE")
+	res, err := stmt.Exec(email, inviteEmail, now)
+	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
-func insertUser(email string, pwRaw []byte, meta *string, emailToken string, refreshToken string, inviteToken string, inviteEmail *string, invitedAt *time.Time) error {
+func insertUser(email string, pwRaw []byte, meta *string, emailToken string, refreshToken string, inviteToken string, now time.Time) error {
 	pw := base32.StdEncoding.EncodeToString(pwRaw)
-	stmt, err := db.Prepare("INSERT INTO auth (email, password, meta, emailToken, refreshToken, inviteToken, inviteEmail, invitedAt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
+	stmt, err := db.Prepare("INSERT INTO auth (email, password, meta, email_token, refresh_token, invite_token, created_at) " +
+		"VALUES ($1, $2, $3, $4, $5, $6, $7)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email, pw, meta, emailToken, refreshToken, inviteToken, inviteEmail, invitedAt)
-	err = handleErr(res, err, "INSERT INTO auth", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "INSERT")
+	res, err := stmt.Exec(email, pw, meta, emailToken, refreshToken, inviteToken, now)
+	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
 func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken string) error {
-	stmt, err := db.Prepare("UPDATE auth SET refreshToken = $1 WHERE refreshToken = $2 and email=$3")
+	stmt, err := db.Prepare("UPDATE auth SET refresh_token = $1 WHERE refresh_token = $2 and email=$3")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE refreshTokenfor statement failed: %v", err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(newRefreshToken, oldRefreshToken, email)
-	err = handleErr(res, err, "UPDATE refreshToken", "n/a")
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "UPDATE_REFRESH")
+	return handleErr(res, err, "UPDATE refreshToken", "n/a")
 }
 
-func resetPasswordInvite(email string, emailToken string, newPw []byte) error {
+func updatePasswordInvite(email string, emailToken string, newPw []byte) error {
 	pw := base32.StdEncoding.EncodeToString(newPw)
-	stmt, err := db.Prepare("UPDATE auth SET password = $1, emailToken = NULL WHERE email = $2 AND emailToken = $3")
+	stmt, err := db.Prepare("UPDATE auth SET password = $1, email_token = NULL WHERE email = $2 AND email_token = $3")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(pw, email, emailToken)
-	err = handleErr(res, err, "UPDATE auth password invite", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "RESET_INVITE")
+	return handleErr(res, err, "UPDATE auth password invite", email)
 }
 
-func resetPassword(email string, forgetEmailToken string, newPw []byte) error {
+func updatePasswordForgot(email string, forgetEmailToken string, newPw []byte) error {
 	pw := base32.StdEncoding.EncodeToString(newPw)
-	stmt, err := db.Prepare("UPDATE auth SET password = $1, totp = NULL, sms = NULL, forgetEmailToken = NULL WHERE email = $2 AND forgetEmailToken = $3")
+	stmt, err := db.Prepare("UPDATE auth SET password = $1, totp = NULL, sms = NULL, forget_email_token = NULL WHERE email = $2 AND forget_email_token = $3")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(pw, email, forgetEmailToken)
-	err = handleErr(res, err, "UPDATE auth password", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "RESET")
+	return handleErr(res, err, "UPDATE auth password", email)
 }
 
 func updateEmailForgotToken(email string, token string) error {
 	//TODO: don't accept too old forget tokens
-	stmt, err := db.Prepare("UPDATE auth SET forgetEmailToken = $1 WHERE email = $2")
+	stmt, err := db.Prepare("UPDATE auth SET forget_email_token = $1 WHERE email = $2")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth forgetEmailToken for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(token, email)
-	err = handleErr(res, err, "UPDATE auth forgetEmailToken", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "FORGOT")
+	return handleErr(res, err, "UPDATE auth forgetEmailToken", email)
 }
 
 func updateTOTP(email string, totp string) error {
@@ -241,112 +186,73 @@ func updateTOTP(email string, totp string) error {
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(totp, email)
-	err = handleErr(res, err, "UPDATE auth totp", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "FORGOT")
+	return handleErr(res, err, "UPDATE auth totp", email)
 }
 
 func updateSMS(email string, totp string, sms string) error {
-	stmt, err := db.Prepare("UPDATE auth SET totp = $1, sms = $2 WHERE email = $3 AND smsVerified IS NULL")
+	stmt, err := db.Prepare("UPDATE auth SET totp = $1, sms = $2 WHERE email = $3 AND sms_verified IS NULL")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth totp for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(totp, sms, email)
-	err = handleErr(res, err, "UPDATE auth totp", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "SMS")
+	return handleErr(res, err, "UPDATE auth totp", email)
 }
 
 func updateEmailToken(email string, token string) error {
-	stmt, err := db.Prepare("UPDATE auth SET emailToken = NULL WHERE email = $1 AND emailToken = $2")
+	stmt, err := db.Prepare("UPDATE auth SET email_token = NULL WHERE email = $1 AND email_token = $2")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email, token)
-	err = handleErr(res, err, "UPDATE auth", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "TOKEN")
+	return handleErr(res, err, "UPDATE auth", email)
 }
 
-func updateSMSVerified(email string) error {
-	stmt, err := db.Prepare("UPDATE auth SET smsVerified = 1 WHERE email = $1 AND sms IS NOT NULL")
+func updateSMSVerified(email string, now time.Time) error {
+	stmt, err := db.Prepare("UPDATE auth SET sms_verified = $1 WHERE email = $2 AND sms IS NOT NULL")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email)
-	err = handleErr(res, err, "UPDATE auth SMS timestamp", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "SMS_VERIFIED")
+	res, err := stmt.Exec(now, email)
+	return handleErr(res, err, "UPDATE auth SMS timestamp", email)
 }
 
-func updateTOTPVerified(email string) error {
-	stmt, err := db.Prepare("UPDATE auth SET totpVerified = 1 WHERE email = $1 AND totp IS NOT NULL")
+func updateTOTPVerified(email string, now time.Time) error {
+	stmt, err := db.Prepare("UPDATE auth SET totp_verified = $1 WHERE email = $2 AND totp IS NOT NULL")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email)
-	err = handleErr(res, err, "UPDATE auth totp timestamp", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "TOTP_VERIFIED")
+	res, err := stmt.Exec(now, email)
+	return handleErr(res, err, "UPDATE auth totp timestamp", email)
 }
 
 func incErrorCount(email string) error {
-	stmt, err := db.Prepare("UPDATE auth set errorCount = errorCount + 1 WHERE email = $1")
+	stmt, err := db.Prepare("UPDATE auth set error_count = error_count + 1 WHERE email = $1")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth status for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email)
-	err = handleErr(res, err, "UPDATE auth errorCount", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "INC_COUNTER")
+	return handleErr(res, err, "UPDATE auth errorCount", email)
 }
 
 func resetCount(email string) error {
-	stmt, err := db.Prepare("UPDATE auth set errorCount = 0 WHERE email = $1")
+	stmt, err := db.Prepare("UPDATE auth set error_count = 0 WHERE email = $1")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth status for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
 	res, err := stmt.Exec(email)
-	err = handleErr(res, err, "UPDATE auth status", email)
-	if err != nil {
-		return err
-	}
-	return insertAudit(email, "RESET_COUNTER")
-}
-
-func insertAudit(email string, action string) error {
-	stmt, err := db.Prepare("INSERT INTO audit (email, action, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)")
-	if err != nil {
-		return fmt.Errorf("prepare INSERT INTO audit for %v statement failed: %v", email, err)
-	}
-	defer closeAndLog(stmt)
-
-	res, err := stmt.Exec(email, action)
-	return handleErr(res, err, "INSERT INTO audit", email)
+	return handleErr(res, err, "UPDATE auth status", email)
 }
 
 func handleErr(res sql.Result, err error, info string, email string) error {
@@ -363,13 +269,13 @@ func handleErr(res sql.Result, err error, info string, email string) error {
 ///////// Setup
 
 func addInitialUserWithMeta(username string, password string, meta *string) error {
-	res, err := dbSelect(username)
+	res, err := findAuthByEmail(username)
 	if res == nil || err != nil {
 		dk, err := newPw(password, 0)
 		if err != nil {
 			return err
 		}
-		err = insertUser(username, dk, meta, "emailToken", "refreshToken", "inviteToken", nil, nil)
+		err = insertUser(username, dk, meta, "emailToken", "refreshToken", "inviteToken", timeNow())
 		if err != nil {
 			return err
 		}
@@ -445,4 +351,12 @@ func closeAndLog(c io.Closer) {
 	if err != nil {
 		log.Printf("could not close: %v", err)
 	}
+}
+
+func agg(column string) string {
+	agg := "string_agg(" + column + ", ',')"
+	if opts.DBDriver == "sqlite3" {
+		agg = "group_concat(" + column + ", ',')"
+	}
+	return agg
 }

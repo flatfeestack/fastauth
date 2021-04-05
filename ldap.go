@@ -82,7 +82,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	dbRes, err := dbSelect(cn)
+	dbRes, err := findAuthByEmail(cn)
 	if err != nil {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
 		w.Write(res)

@@ -5,12 +5,14 @@ go 1.13
 require (
 	github.com/dimiro1/banner v1.0.0
 	github.com/domodwyer/mailyak/v3 v3.3.1
+	github.com/felixge/httpsnoop v1.0.1
 	github.com/go-ldap/ldap/v3 v3.2.3
 	github.com/google/go-cmp v0.5.2 // indirect
 	github.com/gorilla/handlers v1.5.1
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/schema v1.2.0
 	github.com/joho/godotenv v1.3.0
+	github.com/kjk/dailyrotate v0.0.0-20191009232928-ae3b0facf5a6
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/lib/pq v1.8.0
 	github.com/lor00x/goldap v0.0.0-20180618054307-a546dffdd1a3

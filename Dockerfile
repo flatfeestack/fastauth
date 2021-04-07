@@ -10,6 +10,7 @@ COPY *.go *.sql *.html *.txt ./
 RUN make build test
 
 FROM gcr.io/distroless/static
-WORKDIR /app
+WORKDIR /home/nonroot
 COPY --from=builder /app/login.html /app/banner.txt /app/fastauth /app/rmdb.sql /app/init.sql ./
-ENTRYPOINT ["/app/fastauth"]
+USER nonroot
+ENTRYPOINT ["/home/nonroot/fastauth"]

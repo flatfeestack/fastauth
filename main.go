@@ -72,6 +72,9 @@ type Credentials struct {
 	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
 	EmailToken              string `json:"email_token,omitempty" schema:"email_token"`
+	InviteEmail             string `json:"invite_email,omitempty"`
+	InviteDate              string `json:"invite_date,omitempty"`
+	InviteToken             string `json:"invite_token,omitempty"`
 }
 
 type TokenClaims struct {

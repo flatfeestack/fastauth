@@ -38,8 +38,8 @@ type EmailToken struct {
 
 type EmailInvite struct {
 	Email     string    `json:"email"`
-	InvitedAt time.Time `json:"invited_at"`
-	Org       string    `json:"org"`
+	InvitedAt time.Time `json:"invitedAt"`
+	Name      string    `json:"name"`
 }
 
 type scryptParam struct {
@@ -303,11 +303,12 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 	textMessage := parseTemplate("template-plain-signup_"+lang(r)+".tmpl", other)
 
-	encInvToken, err := newPw(e.Email+e.InvitedAt.Format("2006-01-02")+claims.InviteToken, 0)
+	encInvToken, err := newPw(claims.Subject+e.InvitedAt.Format("2006-01-02")+claims.InviteToken, 0)
 
 	if textMessage == "" {
 		textMessage = "Click on this link " + opts.EmailLinkPrefix +
 			"/confirm/invite/" + url.QueryEscape(e.Email) +
+			"/" + emailToken +
 			"/" + url.QueryEscape(claims.Subject) +
 			"/" + e.InvitedAt.Format("2006-01-02") +
 			"/" + base32.StdEncoding.EncodeToString(encInvToken)
@@ -678,29 +679,63 @@ func confirmGeneric(w http.ResponseWriter, r *http.Request, invite bool) {
 		return
 	}
 
-	calcPw, err := newPw(cred.Password, 0)
+	err = validateEmail(cred.InviteEmail)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
+		return
+	}
+
+	decoded, err := base32.StdEncoding.DecodeString(cred.InviteToken)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", cred.Email, err)
+		return
+	}
+
+	res, err := findAuthByEmail(cred.InviteEmail)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
+		return
+	}
+
+	//token is contributor email, validity date, sponsor email
+	storedPw, calcPw, err := checkPw(cred.InviteEmail+cred.InviteDate+res.inviteToken, decoded)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", cred.Email, err)
+		return
+	}
+	if bytes.Compare(calcPw, storedPw) != 0 {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", cred.Email, err)
+		return
+	}
+
+	layout := "2006-01-02"
+	t, err := time.Parse(layout, cred.InviteDate)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+	if t.Add(time.Second * time.Duration(opts.ExpireInvite)).Before(timeNow()) {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+
+	newPw, err := newPw(cred.Password, 0)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
 		return
 	}
 
 	if invite {
-		err = updatePasswordInvite(cred.Email, cred.EmailToken, calcPw)
+		err = updatePasswordInvite(cred.Email, cred.EmailToken, newPw)
 	} else {
-		err = updatePasswordForgot(cred.Email, cred.EmailToken, calcPw)
+		err = updatePasswordForgot(cred.Email, cred.EmailToken, newPw)
 	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
 		return
 	}
 
-	result, err := findAuthByEmail(cred.Email)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-08, update email token for %v failed, token %v: %v", cred.Email, cred.EmailToken, err)
-		return
-	}
-
-	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, cred.Email)
+	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(res, cred.Email)
 	oauth := OAuth{
 		AccessToken:  encodedAccessToken,
 		TokenType:    "Bearer",

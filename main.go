@@ -216,9 +216,9 @@ func NewOpts() *Opts {
 		}
 
 		h := crc64.MakeTable(0xC96C5795D7870F42)
-		if strings.ToLower(opts.RS256) != "true" || strings.ToLower(opts.EdDSA) != "true" {
+		if strings.ToLower(opts.RS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
 			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
-		} else if strings.ToLower(opts.HS256) != "true" || strings.ToLower(opts.EdDSA) != "true" {
+		} else if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
 			rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
 			if err != nil {
 				log.Fatalf("cannot generate rsa key %v", err)
@@ -228,7 +228,7 @@ func NewOpts() *Opts {
 				log.Fatalf("cannot generate rsa key %v", err)
 			}
 			opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
-		} else if strings.ToLower(opts.HS256) != "true" || strings.ToLower(opts.RS256) != "true" {
+		} else if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.RS256) != "true" {
 			_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))))
 			if err != nil {
 				log.Fatalf("cannot generate eddsa key %v", err)

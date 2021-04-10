@@ -353,17 +353,17 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 				} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
 					err = tok.Claims(privEdDSA.Public(), claims)
 				} else {
-					writeErr(w, http.StatusUnauthorized, "invalid_client", "blocked", "ERR-auth-02, unknown algo: %v", bearerToken[1])
+					writeErr(w, http.StatusBadRequest, "invalid_client", "blocked", "ERR-auth-02, unknown algo: %v", bearerToken[1])
 					return
 				}
 
 				if err != nil {
-					writeErr(w, http.StatusUnauthorized, "invalid_client", "blocked", "ERR-auth-02, could not parse claims: %v", bearerToken[1])
+					writeErr(w, http.StatusBadRequest, "invalid_client", "blocked", "ERR-auth-02, could not parse claims: %v", bearerToken[1])
 					return
 				}
 
 				if claims.Expiry != nil && !claims.Expiry.Time().After(timeNow()) {
-					writeErr(w, http.StatusBadRequest, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
+					writeErr(w, http.StatusUnauthorized, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
 					return
 				}
 

@@ -499,7 +499,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusUnauthorized, "invalid_request", "blocked", "ERR-login-07, send sms failed %v error: %v", cred.Email, err)
 				return
 			}
-			writeErr(w, http.StatusTeapot, "invalid_client", "blocked", "ERR-login-08, waiting for sms verification: %v", cred.Email)
+			writeErr(w, http.StatusLocked, "invalid_client", "blocked", "ERR-login-08, waiting for sms verification: %v", cred.Email)
 			return
 		} else if token != cred.TOTP {
 			writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-login-09, sms wrong token, %v err %v", cred.Email, err)

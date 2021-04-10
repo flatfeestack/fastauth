@@ -1,6 +1,5 @@
-FROM golang:1.16-alpine AS base
+FROM golang:1.16 AS base
 WORKDIR /app
-RUN apk add --no-cache make gcc musl-dev
 COPY go.* Makefile cache ./
 #here we build cache.go, as this takes ages to compile and does not change
 RUN make dep && make build && rm fastauth cache.go

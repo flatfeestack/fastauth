@@ -1,11 +1,5 @@
-               _   _
-    /\        | | | |
-   /  \  _   _| |_| |__
-  / /\ \| | | | __| '_ \
- / ____ \ |_| | |_| | | |
-/_/    \_\__,_|\__|_| |_|
-
+{{ .Title "Auth" "big" 0 }}
 GoVersion: {{ .GoVersion }}, GOOS: {{ .GOOS }}, GOARCH: {{ .GOARCH }}, NumCPU: {{ .NumCPU }}
-GOPATH: {{ .GOPATH }}, GOROOT: {{ .GOROOT }}, ENV: {{ .Env "GOPATH" }}
-Compiler: {{ .Compiler }}, Now: {{ .Now "Monday, 2 Jan 2006" }}
-===============================================
+GOROOT: {{ .GOROOT }}, PORT: {{ .Env "PORT" }}, DEV: {{ .Env "DEV" }}, DB: {{ .Env "DB_DRIVER" }}
+Compiler: {{ .Compiler }}, Time: {{ .Now "2006-01-02, 15:04:05.9999 +00:00" }}
+===============================================================================

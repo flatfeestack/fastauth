@@ -385,7 +385,7 @@ func token(email string) string {
 
 func getEmailToken(email string) (string, error) {
 	var emailToken string
-	err := db.QueryRow("SELECT emailToken from auth where email = ?", email).Scan(&emailToken)
+	err := db.QueryRow("SELECT email_token from auth where email = $1", email).Scan(&emailToken)
 	if err != nil {
 		return "", err
 	}
@@ -394,7 +394,7 @@ func getEmailToken(email string) (string, error) {
 
 func getForgotEmailToken(email string) (string, error) {
 	var forgetEmailToken string
-	err := db.QueryRow("SELECT forgetEmailToken from auth where email = ?", email).Scan(&forgetEmailToken)
+	err := db.QueryRow("SELECT forget_email_token from auth where email = $1", email).Scan(&forgetEmailToken)
 	if err != nil {
 		return "", err
 	}
@@ -430,30 +430,42 @@ func mainTest(args ...string) func() {
 		log.Fatal(err)
 	}
 	setupDB()
-	serverRest, doneChannelRest, err := serverRest()
+	serverRest, doneChannelRest, err := serverRest(false)
 	if err != nil {
 		log.Fatal(err)
 	}
 	serverLdap, doneChannelLdap := serverLdap()
 
 	return func() {
+		defer timeTrack(time.Now(), "shutdown")
 		os.Args = oldArgs
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
 		serverRest.Shutdown(context.Background())
 		serverLdap.Stop()
 		if serverLdap.Listener != nil {
 			serverLdap.Listener.Close()
 		}
-		<-doneChannelRest
-		<-doneChannelLdap
+
 		err := db.Close()
 		if err != nil {
 			log.Printf("could not close DB %v", err)
 		}
+
 		//for testing, the DB needs to be wiped after each run
-		err = os.Remove(opts.DBPath)
-		if err != nil {
-			log.Printf("could not remove DB file %v", err)
+		if opts.DBDriver == "sqlite3" {
+			err = os.Remove(opts.DBPath)
+			if err != nil {
+				log.Printf("could not remove DB file %v", err)
+			}
 		}
+
+		<-doneChannelRest
+		<-doneChannelLdap
 	}
+}
+
+func timeTrack(start time.Time, name string) {
+	elapsed := time.Since(start)
+	log.Printf("%s took %s", name, elapsed)
 }

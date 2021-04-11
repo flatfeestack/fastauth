@@ -173,12 +173,14 @@ func NewOpts() *Opts {
 func encodeAccessToken(dir string, subject string) (string, error) {
 	var sig jose.Signer
 	var err error
-	if privRSA != nil {
+	if jwtKey != nil {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+	} else if privRSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
 	} else if privEdDSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+		return "", fmt.Errorf("JWT access token %v no keys", subject)
 	}
 
 	tokenClaims["sub"] = subject

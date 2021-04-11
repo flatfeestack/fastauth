@@ -1,19 +1,15 @@
-FROM golang:1.15-alpine AS builder
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-RUN apk add make gcc musl-dev
+FROM golang:1.16 AS base
 WORKDIR /app
-RUN chown -R appuser:appgroup /app
-USER appuser
-# User from here
-COPY --chown=appuser:appgroup go.* Makefile ./
-RUN --mount=type=cache,target=/root/.cache/go-build make dep
-COPY --chown=appuser:appgroup . .
-RUN --mount=type=cache,target=/root/.cache/go-build make build test
+COPY go.* Makefile cache ./
+#here we build cache.go, as this takes ages to compile and does not change
+RUN make dep && make build && rm fastauth cache.go
 
-FROM alpine:3.13
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-WORKDIR /app
+FROM base as builder
+COPY *.go *.sql *.html *.txt ./
+RUN make build test
+
+FROM gcr.io/distroless/static
+WORKDIR /home/nonroot
 COPY --from=builder /app/login.html /app/banner.txt /app/fastauth /app/rmdb.sql /app/init.sql ./
-RUN chown -R appuser:appgroup /app
-USER appuser
-ENTRYPOINT ["./fastauth"]
+USER nonroot
+ENTRYPOINT ["/home/nonroot/fastauth"]

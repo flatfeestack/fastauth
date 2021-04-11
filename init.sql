@@ -1,22 +1,22 @@
 CREATE TABLE IF NOT EXISTS auth (
 	email VARCHAR(64) PRIMARY KEY,
-    inviteEmail VARCHAR(64),
 	password VARCHAR(80),
-	refreshToken VARCHAR(32) NOT NULL,
-	emailToken VARCHAR(32),
-	forgetEmailToken VARCHAR(32),
+	refresh_token VARCHAR(32) NOT NULL,
+	email_token VARCHAR(32),
+	forget_email_token VARCHAR(32),
+	invite_token VARCHAR(32),
     sms VARCHAR(16),
-    smsVerified INT DEFAULT 0,
+    sms_verified TIMESTAMP,
 	totp VARCHAR(64),
-    totpVerified INT DEFAULT 0,
-	errorCount INT DEFAULT 0,
+    totp_verified TIMESTAMP,
+	error_count INT DEFAULT 0,
     meta TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS audit (
-    email TEXT,
-    action TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS invite (
+    email VARCHAR(64),
+    invite_email VARCHAR(64),
+    created_at TIMESTAMP NOT NULL,
+    PRIMARY KEY(email, invite_email)
 );
-CREATE INDEX emailIndex ON audit (email);

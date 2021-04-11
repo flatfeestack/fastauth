@@ -15,9 +15,9 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dimiro1/banner"
-	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	"github.com/kjk/dailyrotate"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	ldap "github.com/vjeantet/ldapserver"
@@ -33,6 +33,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -52,6 +53,7 @@ var (
 	refreshExp   time.Duration
 	codeExp      time.Duration
 	hoursAdd     int
+	logFile      *dailyrotate.File
 )
 
 type Credentials struct {
@@ -70,12 +72,17 @@ type Credentials struct {
 	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
 	EmailToken              string `json:"email_token,omitempty" schema:"email_token"`
+	InviteEmail             string `json:"invite_email,omitempty"`
+	InviteDate              string `json:"invite_date,omitempty"`
+	InviteToken             string `json:"invite_token,omitempty"`
 }
 
 type TokenClaims struct {
-	Meta     string `json:"meta,omitempty"`
-	Scope    string `json:"scope,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
+	Meta        *string   `json:"meta,omitempty"`
+	Scope       string    `json:"scope,omitempty"`
+	InviteToken string    `json:"invite_token,omitempty"`
+	InviteEmail *string   `json:"invite_email,omitempty"`
+	InvitedAt   time.Time `json:"invited_at,omitempty"`
 	jwt.Claims
 }
 type RefreshClaims struct {
@@ -119,6 +126,7 @@ type Opts struct {
 	ExpireAccess    int
 	ExpireRefresh   int
 	ExpireCode      int
+	ExpireInvite    int
 	HS256           string
 	EdDSA           string
 	RS256           string
@@ -133,6 +141,7 @@ type Opts struct {
 	Redirects       string
 	PasswordFlow    bool
 	Scope           string
+	LogPath         string
 }
 
 func NewOpts() *Opts {
@@ -167,6 +176,8 @@ func NewOpts() *Opts {
 		180*24*60*60), "Refresh token expiration in seconds, default 6month")
 	flag.IntVar(&opts.ExpireCode, "expire-code", lookupEnvInt("EXPIRE_CODE",
 		60), "Authtoken flow expiration in seconds, default 1min")
+	flag.IntVar(&opts.ExpireInvite, "expire-invite", lookupEnvInt("EXPIRE_INVITE",
+		7*24*60*60), "InviteToken expiration in seconds, default 7 days")
 	flag.StringVar(&opts.HS256, "hs256", lookupEnv("HS256"), "HS256 key")
 	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
@@ -179,6 +190,8 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.Redirects, "redir", lookupEnv("REDIR"), "add client redirects. E.g, -redir clientId1:http://blabla;clientId2:http://blublu")
 	flag.BoolVar(&opts.PasswordFlow, "pwflow", lookupEnv("PWFLOW") != "", "enable password flow, default disabled")
 	flag.StringVar(&opts.Scope, "scope", lookupEnv("SCOPE"), "scope, default in dev is my-scope")
+	flag.StringVar(&opts.LogPath, "log", lookupEnv("LOG",
+		os.TempDir()+"/fastauth"), "Log directory, default is /tmp/fastauth")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -205,11 +218,10 @@ func NewOpts() *Opts {
 			opts.UrlSms = "http://localhost:8080/send/sms/{sms}/{token}"
 		}
 
-		if strings.ToLower(opts.HS256) != "false" {
-			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
-		}
 		h := crc64.MakeTable(0xC96C5795D7870F42)
-		if strings.ToLower(opts.RS256) != "false" {
+		if strings.ToLower(opts.RS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
+			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
+		} else if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
 			rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
 			if err != nil {
 				log.Fatalf("cannot generate rsa key %v", err)
@@ -219,8 +231,7 @@ func NewOpts() *Opts {
 				log.Fatalf("cannot generate rsa key %v", err)
 			}
 			opts.RS256 = base32.StdEncoding.EncodeToString(encPrivRSA)
-		}
-		if strings.ToLower(opts.EdDSA) != "false" {
+		} else if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.RS256) != "true" {
 			_, edPrivKey, err := ed25519.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))))
 			if err != nil {
 				log.Fatalf("cannot generate eddsa key %v", err)
@@ -242,18 +253,8 @@ func NewOpts() *Opts {
 		log.Printf("DEV mode active, eddsa is hex(%v)", opts.EdDSA)
 	}
 
-	if strings.ToLower(opts.HS256) == "false" {
-		opts.HS256 = ""
-	}
-	if strings.ToLower(opts.RS256) == "false" {
-		opts.RS256 = ""
-	}
-	if strings.ToLower(opts.EdDSA) == "false" {
-		opts.EdDSA = ""
-	}
-
 	if opts.HS256 == "" && opts.RS256 == "" && opts.EdDSA == "" {
-		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory.\n")
+		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory. Choose one\n")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -352,17 +353,17 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 				} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
 					err = tok.Claims(privEdDSA.Public(), claims)
 				} else {
-					writeErr(w, http.StatusUnauthorized, "invalid_client", "blocked", "ERR-auth-02, unknown algo: %v", bearerToken[1])
+					writeErr(w, http.StatusBadRequest, "invalid_client", "blocked", "ERR-auth-02, unknown algo: %v", bearerToken[1])
 					return
 				}
 
 				if err != nil {
-					writeErr(w, http.StatusUnauthorized, "invalid_client", "blocked", "ERR-auth-02, could not parse claims: %v", bearerToken[1])
+					writeErr(w, http.StatusBadRequest, "invalid_client", "blocked", "ERR-auth-02, could not parse claims: %v", bearerToken[1])
 					return
 				}
 
 				if claims.Expiry != nil && !claims.Expiry.Time().After(timeNow()) {
-					writeErr(w, http.StatusBadRequest, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
+					writeErr(w, http.StatusUnauthorized, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
 					return
 				}
 
@@ -410,7 +411,7 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 }
 
 func checkEmailPassword(email string, password string) (*dbRes, string, error) {
-	result, err := dbSelect(email)
+	result, err := findAuthByEmail(email)
 	if err != nil {
 		return nil, "not-found", fmt.Errorf("ERR-checkEmail-01, DB select, %v err %v", email, err)
 	}
@@ -419,7 +420,7 @@ func checkEmailPassword(email string, password string) (*dbRes, string, error) {
 		return nil, "blocked", fmt.Errorf("ERR-checkEmail-02, user %v no email verified: %v", email, err)
 	}
 
-	if *result.errorCount > 2 {
+	if result.errorCount > 2 {
 		return nil, "blocked", fmt.Errorf("ERR-checkEmail-03, user %v no email verified: %v", email, err)
 	}
 
@@ -466,58 +467,63 @@ func serverLdap() (*ldap.Server, <-chan bool) {
 	return server, done
 }
 
-func serverRest() (*http.Server, <-chan bool, error) {
+func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 	tokenExp = time.Second * time.Duration(opts.ExpireAccess)
 	refreshExp = time.Second * time.Duration(opts.ExpireRefresh)
 	codeExp = time.Second * time.Duration(opts.ExpireCode)
 
 	router := mux.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
-		return handlers.LoggingHandler(os.Stdout, next)
+		return logRequestHandler(next)
 	})
 
 	if opts.UserEndpoints {
-		router.HandleFunc("/login", login).Methods("POST")
-		router.HandleFunc("/refresh", refresh).Methods("POST")
-		router.HandleFunc("/signup", signup).Methods("POST")
-		router.HandleFunc("/invite", jwtAuth(invite)).Methods("POST")
-		router.HandleFunc("/invite/{email}", jwtAuth(inviteDel)).Methods("DELETE")
-		router.HandleFunc("/invites", jwtAuth(invitations)).Methods("GET")
-		router.HandleFunc("/reset/{email}", resetEmail).Methods("POST")
-		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods("GET")
-		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods("Post")
-		router.HandleFunc("/confirm/reset", confirmReset).Methods("POST")
-		router.HandleFunc("/confirm/invite", confirmInvite).Methods("POST")
+		router.HandleFunc("/login", login).Methods(http.MethodPost)
+		router.HandleFunc("/refresh", refresh).Methods(http.MethodPost)
+		router.HandleFunc("/signup", signup).Methods(http.MethodPost)
+		router.HandleFunc("/reset/{email}", resetEmail).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods(http.MethodGet)
+		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/reset", confirmReset).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/invite", confirmInvite).Methods(http.MethodPost)
 
-		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods("POST")
-		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods("POST")
-		router.HandleFunc("/setup/sms/{sms}", jwtAuth(setupSMS)).Methods("POST")
-		router.HandleFunc("/confirm/sms/{token}", jwtAuth(confirmSMS)).Methods("POST")
+		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods(http.MethodPost)
+		router.HandleFunc("/setup/sms/{sms}", jwtAuth(setupSMS)).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/sms/{token}", jwtAuth(confirmSMS)).Methods(http.MethodPost)
+
+		//invites
+		router.HandleFunc("/invite", jwtAuth(inviteOther)).Methods(http.MethodPost)
+		router.HandleFunc("/invite/{email}", jwtAuth(inviteOtherDelete)).Methods(http.MethodDelete)
+		router.HandleFunc("/invite/me/{email}", jwtAuth(inviteMyDelete)).Methods(http.MethodDelete)
+		router.HandleFunc("/invite/{email}/{token}/{date}", jwtAuth(inviteAccept)).Methods(http.MethodPut)
+		router.HandleFunc("/invite", jwtAuth(invitations)).Methods(http.MethodGet)
+		router.HandleFunc("/invite", jwtAuth(inviteResetMyToken)).Methods(http.MethodPatch)
 	}
 
 	//maintenance stuff
-	router.HandleFunc("/readiness", readiness).Methods("GET")
-	router.HandleFunc("/liveness", liveness).Methods("GET")
+	router.HandleFunc("/readiness", readiness).Methods(http.MethodGet)
+	router.HandleFunc("/liveness", liveness).Methods(http.MethodGet)
 
 	//display for debug and testing
 	if opts.Dev != "" {
-		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods("POST")
-		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods("POST")
-		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods("POST")
+		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods(http.MethodPost)
+		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods(http.MethodPost)
+		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods(http.MethodPost)
 	}
 
 	if opts.OauthEndpoints {
-		router.HandleFunc("/oauth/login", login).Methods("POST")
-		router.HandleFunc("/oauth/token", oauth).Methods("POST")
-		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods("POST")
-		router.HandleFunc("/oauth/authorize", authorize).Methods("GET")
-		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods("GET")
+		router.HandleFunc("/oauth/login", login).Methods(http.MethodPost)
+		router.HandleFunc("/oauth/token", oauth).Methods(http.MethodPost)
+		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods(http.MethodPost)
+		router.HandleFunc("/oauth/authorize", authorize).Methods(http.MethodGet)
+		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 
-		router.HandleFunc("/authen/logout", jwtAuth(logout)).Methods("GET")
+		router.HandleFunc("/authen/logout", jwtAuth(logout)).Methods(http.MethodGet)
 	}
 
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("no route matched for: %v", r.URL)
+		log.Printf("[404] no route matched for: %v", r.URL)
 		w.WriteHeader(http.StatusNotFound)
 	})
 
@@ -527,6 +533,7 @@ func serverRest() (*http.Server, <-chan bool, error) {
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
+	s.SetKeepAlivesEnabled(keepAlive)
 
 	l, err := net.Listen("tcp", s.Addr)
 	if err != nil {
@@ -648,38 +655,31 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string) (string, error) {
-	var tokenClaims *TokenClaims
-	if meta != nil {
-		tokenClaims = &TokenClaims{
-			Meta:  *meta,
-			Scope: scope,
-			Claims: jwt.Claims{
-				Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
-				Subject:  subject,
-				Audience: []string{audience},
-				Issuer:   issuer,
-			},
-		}
-	} else {
-		tokenClaims = &TokenClaims{
-			Scope: scope,
-			Claims: jwt.Claims{
-				Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
-				Subject:  subject,
-				Audience: []string{audience},
-				Issuer:   issuer,
-			},
-		}
+func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmail *string) (string, error) {
+	tokenClaims := &TokenClaims{
+		Meta:        meta,
+		Scope:       scope,
+		InviteToken: inviteToken,
+		InviteEmail: inviteEmail,
+		Claims: jwt.Claims{
+			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
+			Subject:  subject,
+			Audience: []string{audience},
+			Issuer:   issuer,
+			IssuedAt: jwt.NewNumericDate(timeNow()),
+		},
 	}
+
 	var sig jose.Signer
 	var err error
-	if opts.RS256 != "" {
+	if jwtKey != nil {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+	} else if privRSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if opts.EdDSA != "" {
+	} else if privEdDSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+		return "", fmt.Errorf("JWT access token %v no key", tokenClaims.Subject)
 	}
 
 	if err != nil {
@@ -689,7 +689,9 @@ func encodeAccessToken(meta *string, subject string, scope string, audience stri
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
-	fmt.Printf("[%s]", accessTokenString)
+	if opts.Dev != "" {
+		log.Printf("Access token: [%s]", accessTokenString)
+	}
 	return accessTokenString, nil
 }
 
@@ -701,12 +703,14 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 
 	var sig jose.Signer
 	var err error
-	if opts.RS256 != "" {
+	if jwtKey != nil {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+	} else if privRSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if opts.EdDSA != "" {
+	} else if privEdDSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+		return "", 0, fmt.Errorf("JWT refresh token %v no key", subject)
 	}
 
 	if err != nil {
@@ -716,7 +720,9 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
 	}
-	fmt.Printf("[%s]", refreshToken)
+	if opts.Dev != "" {
+		log.Printf("Refresh token: [%s]", refreshToken)
+	}
 	return refreshToken, rc.ExpiresAt, nil
 }
 
@@ -729,12 +735,14 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
 
 	var sig jose.Signer
 	var err error
-	if opts.RS256 != "" {
+	if jwtKey != nil {
+		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+	} else if privRSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if opts.EdDSA != "" {
+	} else if privEdDSA != nil {
 		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
 	} else {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
+		return "", 0, fmt.Errorf("JWT refresh token %v no key", subject)
 	}
 
 	if err != nil {
@@ -744,7 +752,9 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
 	if err != nil {
 		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
 	}
-	fmt.Printf("[%s]", codeToken)
+	if opts.Dev != "" {
+		log.Printf("Code token: [%s]", codeToken)
+	}
 	return codeToken, cc.ExpiresAt, nil
 }
 
@@ -769,7 +779,7 @@ func resetRefreshToken(oldToken string, email string) (string, error) {
 }
 
 func checkRefresh(email string, token string) (string, string, int64, error) {
-	result, err := dbSelect(email)
+	result, err := findAuthByEmail(email)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", email, err)
 	}
@@ -778,19 +788,23 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", email, err)
 	}
 
-	if result.refreshToken == nil || token != *result.refreshToken {
-		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch %v != %v", token, *result.refreshToken)
+	if result.refreshToken == "" || token != result.refreshToken {
+		if opts.Dev != "" {
+			log.Printf("refresh token mismatch %v != %v", token, result.refreshToken)
+		}
+		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch")
+
 	}
 	return encodeTokens(result, email)
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer)
+	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, result.inviteEmails)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}
 
-	refreshToken := *result.refreshToken
+	refreshToken := result.refreshToken
 	if opts.ResetRefresh {
 		refreshToken, err = resetRefreshToken(refreshToken, email)
 		if err != nil {
@@ -912,12 +926,27 @@ func main() {
 
 	opts = NewOpts()
 
+	//logs: we have to ensure the directory we want to write to
+	// already exists
+	err = os.MkdirAll(opts.LogPath, 0755)
+	if err != nil {
+		log.Fatalf("os.MkdirAll()")
+	}
+	pathFormat := filepath.Join(opts.LogPath, "2006-01-02.txt")
+	w, err := dailyrotate.NewFile(pathFormat, func(string, bool) {})
+	if err != nil {
+		log.Fatalf("cannot log")
+	}
+	logFile = w
+
+	//db: init the database
 	db, err = initDB()
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 	setupDB()
-	serverRest, doneChannelRest, err := serverRest()
+	serverRest, doneChannelRest, err := serverRest(true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -936,5 +965,4 @@ func main() {
 
 	<-doneChannelRest
 	<-doneChannelLdap
-	db.Close()
 }

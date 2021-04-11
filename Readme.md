@@ -51,7 +51,7 @@ curl -H 'Accept: application/json' -H "Authorization: Bearer ${TOKEN}" http://lo
 
 For the PKCE flow add the following parameters:
 
-[http://localhost:8080/oauth/authorize?response_type=code&code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256](http://localhost:8080/oauth/authorize?response_type=code&code_challenge=wzgWKL-viRpFQ6DYzea6XxokpxzAEBcAklksaRd_8Gw&code_challenge_method=S256).
+[http://localhost:8080/oauth/authorize?response_type=code&code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256](http://localhost:8080/oauth/authorize?response_type=code&code_challenge=fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco&code_challenge_method=S256).
 
 In this example, we have the code verifier: HalloDasIstEinTest123456789012345678901234567890 and the
 challenge: fNcHfbUCOvMuzmkBK7c2MR_8TK_Iq6tHDXTJL6qcAco ([test it here](https://tonyxu-io.github.io/pkce-generator/)).

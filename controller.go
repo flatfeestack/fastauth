@@ -99,7 +99,9 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 
 	err = updateEmailToken(et.Email, et.Token)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
+		//the token can be only updated once. Otherwise, anyone with the link can always login. Thus, if the email
+		//leaks, the account is compromised. Thus, disallow this.
+		writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
 		return
 	}
 

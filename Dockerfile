@@ -5,7 +5,7 @@ COPY go.* Makefile cache ./
 RUN make dep && make build && rm fastauth cache.go
 
 FROM base as builder
-COPY *.go *.sql *.html *.txt ./
+COPY *.go *.sql login.html banner.txt ./
 RUN make build test
 
 FROM gcr.io/distroless/static

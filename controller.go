@@ -1014,7 +1014,7 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 		}
 		cc, err := checkCodeToken(code)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, code check failed: %v", err)
 			return
 		}
 		if cc.CodeCodeChallengeMethod == "S256" {

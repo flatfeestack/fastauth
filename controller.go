@@ -165,34 +165,34 @@ func inviteAccept(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 	token, err := url.QueryUnescape(vars["token"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape token %v err: %v", vars["token"], err)
 		return
 	}
 	date, err := url.QueryUnescape(vars["date"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape date %v err: %v", vars["date"], err)
 		return
 	}
 	other, err := findAuthByEmail(email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, find auth email %v err: %v", vars["email"], err)
 		return
 	}
 
 	decoded, err := base32.StdEncoding.DecodeString(token)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, decode token %v err: %v", vars["email"], err)
 		return
 	}
 
 	//token is contributor email, validity date, sponsor email
 	storedPw, calcPw, err := checkPw(claims.Subject+date+other.inviteToken, decoded)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, check pw %v err: %v", vars["email"], err)
 		return
 	}
 	if bytes.Compare(calcPw, storedPw) != 0 {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, compare error %v err: %v", vars["email"], err)
 		return
 	}
 

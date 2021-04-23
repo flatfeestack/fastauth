@@ -597,7 +597,7 @@ func sendEmail(url string, e EmailRequest) error {
 	var err error
 	if strings.Contains(url, "sendgrid") {
 		sendGridReq := NewSingleEmailPlainText(
-			NewEmail("", "info@flatfeestack.io"),
+			NewEmail("Flatfeestack", "info@flatfeestack.io"),
 			e.Subject,
 			NewEmail("", e.MailTo),
 			e.TextMessage)

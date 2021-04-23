@@ -592,12 +592,25 @@ func sendEmail(url string, e EmailRequest) error {
 	c := &http.Client{
 		Timeout: 15 * time.Second,
 	}
-	j, err := json.Marshal(e)
+
+	var jsonData []byte
+	var err error
+	if strings.Contains(url, "sendgrid") {
+		sendGridReq := NewSingleEmailPlainText(
+			NewEmail("", "info@flatfeestack.io"),
+			e.Subject,
+			NewEmail("", e.MailTo),
+			e.TextMessage)
+		jsonData, err = json.Marshal(sendGridReq)
+	} else {
+		jsonData, err = json.Marshal(e)
+	}
+
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(j))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}

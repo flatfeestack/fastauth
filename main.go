@@ -623,7 +623,7 @@ func sendEmail(url string, e EmailRequest) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("could not update DB as status from email server: %v %v", resp.Status, resp.StatusCode)
 	}
 	return nil

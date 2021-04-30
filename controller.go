@@ -318,7 +318,7 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	htmlMessage := parseTemplate("template-html-signup_"+lang(r)+".tmpl", other)
 
 	req := EmailRequest{
-		MailTo:      url.QueryEscape(e.Email),
+		MailTo:      e.Email,
 		Subject:     subject,
 		TextMessage: textMessage,
 		HtmlMessage: htmlMessage,
@@ -410,7 +410,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	htmlMessage := parseTemplate("template-html-signup_"+lang(r)+".tmpl", other)
 
 	e := EmailRequest{
-		MailTo:      url.QueryEscape(cred.Email),
+		MailTo:      cred.Email,
 		Subject:     subject,
 		TextMessage: textMessage,
 		HtmlMessage: htmlMessage,

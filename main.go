@@ -117,6 +117,8 @@ type Opts struct {
 	DBPath          string
 	DBDriver        string
 	DBScripts       string
+	EmailFrom       string
+	EmailFromName   string
 	EmailUrl        string
 	EmailToken      string
 	EmailLinkPrefix string
@@ -164,6 +166,8 @@ func NewOpts() *Opts {
 		"sqlite3"), "DB driver")
 	flag.StringVar(&opts.DBScripts, "db-scripts", lookupEnv("DB_SCRIPTS",
 		"rmdb.sql:init.sql"), "DB scripts to run at startup")
+	flag.StringVar(&opts.EmailFrom, "email-from", lookupEnv("EMAIL_FROM"), "Email from, default is info@flatfeestack.io")
+	flag.StringVar(&opts.EmailFromName, "email-from-name", lookupEnv("EMAIL_FROM_NAME"), "Email from name, default is a empty string")
 	flag.StringVar(&opts.EmailUrl, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.EmailToken, "email-token", lookupEnv("EMAIL_TOKEN"), "Email service token")
 	flag.StringVar(&opts.EmailLinkPrefix, "email-prefix", lookupEnv("EMAIL_PREFIX"), "Email link prefix")
@@ -299,6 +303,15 @@ func NewOpts() *Opts {
 		}
 		privEdDSAKid = hex.EncodeToString(kid)
 	}
+
+	if opts.EmailFrom == "" {
+		opts.EmailFrom = "info@flatfeestack.io"
+	}
+
+	if opts.EmailFromName == "" {
+		opts.EmailFromName = ""
+	}
+
 	return opts
 }
 
@@ -597,7 +610,7 @@ func sendEmail(url string, e EmailRequest) error {
 	var err error
 	if strings.Contains(url, "sendgrid") {
 		sendGridReq := NewSingleEmailPlainText(
-			NewEmail("Flatfeestack", "info@flatfeestack.io"),
+			NewEmail(opts.EmailFromName, opts.EmailFrom),
 			e.Subject,
 			NewEmail("", e.MailTo),
 			e.TextMessage)

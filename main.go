@@ -512,10 +512,9 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/invite/{email}/{token}/{date}", jwtAuth(inviteAccept)).Methods(http.MethodPut)
 		router.HandleFunc("/invite", jwtAuth(invitations)).Methods(http.MethodGet)
 		router.HandleFunc("/invite", jwtAuth(inviteResetMyToken)).Methods(http.MethodPatch)
-
-		// oauth
-		router.HandleFunc("/authen/logout", jwtAuth(logout)).Methods(http.MethodGet)
 	}
+	//logout
+	router.HandleFunc("/authen/logout", jwtAuth(logout)).Methods(http.MethodGet)
 
 	//maintenance stuff
 	router.HandleFunc("/readiness", readiness).Methods(http.MethodGet)

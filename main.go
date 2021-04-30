@@ -30,6 +30,7 @@ import (
 	rnd "math/rand"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -630,6 +631,10 @@ func sendEmail(url string, e EmailRequest) error {
 
 	req.Header.Add("Authorization", "Bearer "+opts.EmailToken)
 	req.Header.Set("Content-Type", "application/json")
+
+	wholeReqBytes, err := httputil.DumpRequest(req, true)
+	fmt.Println(string(wholeReqBytes))
+
 	resp, err := c.Do(req)
 	if err != nil {
 		return err

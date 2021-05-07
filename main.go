@@ -164,8 +164,7 @@ func NewOpts() *Opts {
 		"./fastauth.db"), "DB path")
 	flag.StringVar(&opts.DBDriver, "db-driver", lookupEnv("DB_DRIVER",
 		"sqlite3"), "DB driver")
-	flag.StringVar(&opts.DBScripts, "db-scripts", lookupEnv("DB_SCRIPTS",
-		"rmdb.sql:init.sql"), "DB scripts to run at startup")
+	flag.StringVar(&opts.DBScripts, "db-scripts", lookupEnv("DB_SCRIPTS"), "DB scripts to run at startup")
 	flag.StringVar(&opts.EmailFrom, "email-from", lookupEnv("EMAIL_FROM"), "Email from, default is info@flatfeestack.io")
 	flag.StringVar(&opts.EmailFromName, "email-from-name", lookupEnv("EMAIL_FROM_NAME"), "Email from name, default is a empty string")
 	flag.StringVar(&opts.EmailUrl, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")

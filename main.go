@@ -523,6 +523,9 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 	if opts.Dev != "" {
 		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods(http.MethodPost)
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods(http.MethodPost)
+	}
+
+	if opts.Dev != "" || opts.Env == "dev" {
 		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods(http.MethodPost)
 	}
 

@@ -1,5 +1,5 @@
-FROM golang:1.16-alpine AS base
-RUN apk update && apk add --update make gcc musl-dev
+FROM alpine:3.13 AS base
+RUN apk update && apk add --update make gcc musl-dev go
 WORKDIR /app
 COPY go.* Makefile cache ./
 #here we build cache.go, as this takes ages to compile and does not change

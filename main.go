@@ -497,6 +497,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods(http.MethodGet)
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/reset", confirmReset).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/invite-new", confirmInviteNew).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/invite", confirmInvite).Methods(http.MethodPost)
 
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods(http.MethodPost)
@@ -603,46 +604,7 @@ func writeErr(w http.ResponseWriter, code int, error string, detailError string,
 	w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/` + error + `/` + detailError + `"` + msg + `}`))
 }
 
-func sendEmail(url string, e EmailRequest) error {
-	c := &http.Client{
-		Timeout: 15 * time.Second,
-	}
 
-	var jsonData []byte
-	var err error
-	if strings.Contains(url, "sendgrid") {
-		sendGridReq := NewSingleEmailPlainText(
-			NewEmail(opts.EmailFromName, opts.EmailFrom),
-			e.Subject,
-			NewEmail("", e.MailTo),
-			e.TextMessage)
-		jsonData, err = json.Marshal(sendGridReq)
-	} else {
-		jsonData, err = json.Marshal(e)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Add("Authorization", "Bearer "+opts.EmailToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("could not send email: %v %v", resp.Status, resp.StatusCode)
-	}
-	return nil
-}
 
 func sendSMS(url string) error {
 	c := &http.Client{

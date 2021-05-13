@@ -71,18 +71,18 @@ type Credentials struct {
 	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
 	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
-	EmailToken              string `json:"email_token,omitempty" schema:"email_token"`
-	InviteEmail             string `json:"invite_email,omitempty"`
-	InviteDate              string `json:"invite_date,omitempty"`
-	InviteToken             string `json:"invite_token,omitempty"`
+	//Token stuff
+	EmailToken  string `json:"email_token,omitempty" schema:"email_token"`
+	InviteEmail string `json:"inviteEmail,omitempty"`
+	ExpireAt    string `json:"expireAt,omitempty"`
+	InviteToken string `json:"inviteToken,omitempty"`
 }
 
 type TokenClaims struct {
-	Meta        *string   `json:"meta,omitempty"`
-	Scope       string    `json:"scope,omitempty"`
-	InviteToken string    `json:"invite_token,omitempty"`
-	InviteEmail *string   `json:"invite_email,omitempty"`
-	InvitedAt   time.Time `json:"invited_at,omitempty"`
+	Meta         *string  `json:"meta,omitempty"`
+	Scope        string   `json:"scope,omitempty"`
+	InviteToken  string   `json:"inviteToken,omitempty"`
+	InviteEmails []string `json:"inviteEmails,omitempty"`
 	jwt.Claims
 }
 type RefreshClaims struct {
@@ -128,7 +128,6 @@ type Opts struct {
 	ExpireAccess    int
 	ExpireRefresh   int
 	ExpireCode      int
-	ExpireInvite    int
 	HS256           string
 	EdDSA           string
 	RS256           string
@@ -179,8 +178,6 @@ func NewOpts() *Opts {
 		180*24*60*60), "Refresh token expiration in seconds, default 6month")
 	flag.IntVar(&opts.ExpireCode, "expire-code", lookupEnvInt("EXPIRE_CODE",
 		60), "Authtoken flow expiration in seconds, default 1min")
-	flag.IntVar(&opts.ExpireInvite, "expire-invite", lookupEnvInt("EXPIRE_INVITE",
-		7*24*60*60), "InviteToken expiration in seconds, default 7 days")
 	flag.StringVar(&opts.HS256, "hs256", lookupEnv("HS256"), "HS256 key")
 	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
@@ -507,10 +504,11 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 
 		//invites
 		router.HandleFunc("/invite", jwtAuth(inviteOther)).Methods(http.MethodPost)
-		router.HandleFunc("/invite/{email}", jwtAuth(inviteOtherDelete)).Methods(http.MethodDelete)
-		router.HandleFunc("/invite/me/{email}", jwtAuth(inviteMyDelete)).Methods(http.MethodDelete)
-		router.HandleFunc("/invite/{email}/{token}/{date}", jwtAuth(inviteAccept)).Methods(http.MethodPut)
 		router.HandleFunc("/invite", jwtAuth(invitations)).Methods(http.MethodGet)
+		router.HandleFunc("/invite/{email}", jwtAuth(inviteOtherDelete)).Methods(http.MethodDelete)
+		//TODO: not yet in the frontend
+		router.HandleFunc("/invite/me/{email}", jwtAuth(inviteMyDelete)).Methods(http.MethodDelete)
+		//TODO: not yet in the frontend
 		router.HandleFunc("/invite", jwtAuth(inviteResetMyToken)).Methods(http.MethodPatch)
 	}
 	//logout
@@ -604,8 +602,6 @@ func writeErr(w http.ResponseWriter, code int, error string, detailError string,
 	w.Write([]byte(`{"error":"` + error + `","error_uri":"https://host:port/error-descriptions/authorization-request/` + error + `/` + detailError + `"` + msg + `}`))
 }
 
-
-
 func sendSMS(url string) error {
 	c := &http.Client{
 		Timeout: 15 * time.Second,
@@ -645,12 +641,12 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmail *string) (string, error) {
+func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string) (string, error) {
 	tokenClaims := &TokenClaims{
-		Meta:        meta,
-		Scope:       scope,
-		InviteToken: inviteToken,
-		InviteEmail: inviteEmail,
+		Meta:         meta,
+		Scope:        scope,
+		InviteToken:  inviteToken,
+		InviteEmails: inviteEmails,
 		Claims: jwt.Claims{
 			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
 			Subject:  subject,
@@ -789,7 +785,12 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, result.inviteEmails)
+	var inviteEmails []string
+	if result.inviteEmails != nil {
+		s := *result.inviteEmails
+		inviteEmails = strings.Split(s, ",")
+	}
+	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

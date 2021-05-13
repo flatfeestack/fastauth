@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS auth (
 CREATE TABLE IF NOT EXISTS invite (
     email VARCHAR(64),
     invite_email VARCHAR(64),
+    confirmed_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL,
     PRIMARY KEY(email, invite_email)
 );

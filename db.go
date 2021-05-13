@@ -27,9 +27,9 @@ type dbRes struct {
 }
 
 type dbInvite struct {
-	Email     string    `json:"email"`
-	Pending   bool      `json:"pending"`
-	CreatedAt time.Time `json:"createdAt"`
+	Email       string     `json:"email"`
+	ConfirmedAt *time.Time `json:"confirmedAt"`
+	CreatedAt   time.Time  `json:"createdAt"`
 }
 
 func findAuthByEmail(email string) (*dbRes, error) {
@@ -40,7 +40,7 @@ func findAuthByEmail(email string) (*dbRes, error) {
                      a.error_count, 
                      (SELECT ` + agg("i.invite_email") + ` 
                       FROM invite i 
-                      WHERE i.email=a.email) as invite_emails
+                      WHERE i.email=a.email AND i.confirmed_at IS NOT NULL) as invite_emails
 			  FROM auth a
               WHERE a.email = $1`
 	err := db.QueryRow(query, email).Scan(
@@ -58,10 +58,9 @@ func findAuthByEmail(email string) (*dbRes, error) {
 
 func findInvitationsByEmail(email string) ([]dbInvite, error) {
 	var res []dbInvite
-	query := `SELECT i.email, a.email_token, i.created_at 
-              FROM invite i 
-                  INNER JOIN auth a ON i.email = a.email 
-              WHERE i.invite_email=$1`
+	query := `SELECT email, confirmed_at, created_at 
+              FROM invite 
+              WHERE invite_email=$1`
 	rows, err := db.Query(query, email)
 
 	switch err {
@@ -71,9 +70,7 @@ func findInvitationsByEmail(email string) ([]dbInvite, error) {
 		defer closeAndLog(rows)
 		for rows.Next() {
 			var inv dbInvite
-			var emailToken *string
-			err = rows.Scan(&inv.Email, &emailToken, &inv.CreatedAt)
-			inv.Pending = emailToken != nil
+			err = rows.Scan(&inv.Email, &inv.ConfirmedAt, &inv.CreatedAt)
 			if err != nil {
 				return nil, err
 			}
@@ -152,6 +149,17 @@ func updatePasswordInvite(email string, emailToken string, newPw []byte) error {
 
 	res, err := stmt.Exec(pw, email, emailToken)
 	return handleErr(res, err, "UPDATE auth password invite", email)
+}
+
+func updateConfirmInviteAt(email string, inviteEmail string, now time.Time) error {
+	stmt, err := db.Prepare("UPDATE invite SET confirmed_at = $1 WHERE email = $2 and invite_email=$3")
+	if err != nil {
+		return fmt.Errorf("prepare UPDATE invite statement failed: %v", err)
+	}
+	defer closeAndLog(stmt)
+
+	res, err := stmt.Exec(now, email, inviteEmail)
+	return handleErr(res, err, "UPDATE invite", email)
 }
 
 func updatePasswordForgot(email string, forgetEmailToken string, newPw []byte) error {

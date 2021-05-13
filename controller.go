@@ -248,7 +248,7 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	var other map[string]string
+	other := map[string]string{}
 	_, err = findAuthByEmail(e.Email)
 	if err != nil {
 		emailToken, err := genToken()
@@ -298,9 +298,9 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		other["lang"] = lang(r)
 
 		e := prepareEmail(e.Email, other,
-		"template-subject-invite-new_", "You have been invited, activate your account",
-		"template-plain-invite-new_", "Click on this link: "+other["url"],
-		"template-html-invite-new_", other["lang"])
+			"template-subject-invite-new_", "You have been invited, activate your account",
+			"template-plain-invite-new_", "Click on this link: "+other["url"],
+			"template-html-invite-new_", other["lang"])
 
 		go func() {
 			err = sendEmail(opts.EmailUrl, e)
@@ -397,7 +397,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var other map[string]string
+	other := map[string]string{}
 	err = json.NewDecoder(rdr2).Decode(&other)
 	if err != nil {
 		log.Printf("No or wrong json, ignoring [%v]", err)
@@ -409,8 +409,8 @@ func signup(w http.ResponseWriter, r *http.Request) {
 
 	e := prepareEmail(cred.Email, other,
 		"template-subject-signup_", "Validate your email",
-		"template-plain-reset_", "Click on this link: "+other["url"],
-		"template-html-reset_", other["lang"])
+		"template-plain-signup_", "Click on this link: "+other["url"],
+		"template-html-signup_", other["lang"])
 
 	go func() {
 		err = sendEmail(opts.EmailUrl, e)
@@ -597,7 +597,7 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var other map[string]string
+	other := map[string]string{}
 	err = json.NewDecoder(r.Body).Decode(&other)
 	if err != nil {
 		log.Printf("No or wrong json, ignoring [%v]", err)
@@ -739,12 +739,10 @@ func handleInvite(cred Credentials) error {
 		return err
 	}
 	if t.Add(time.Second * time.Duration(opts.ExpireInvite)).Before(timeNow()) {
-		return fmt.Errorf("Expired: %v before %v",time.Second * time.Duration(opts.ExpireInvite), timeNow())
+		return fmt.Errorf("Expired: %v before %v", time.Second*time.Duration(opts.ExpireInvite), timeNow())
 	}
 	return nil
 }
-
-
 
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	secret, err := genToken()

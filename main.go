@@ -76,6 +76,7 @@ type Credentials struct {
 	InviteEmail string `json:"inviteEmail,omitempty"`
 	ExpireAt    string `json:"expireAt,omitempty"`
 	InviteToken string `json:"inviteToken,omitempty"`
+	InviteMeta  string `json:"inviteMeta,omitempty"`
 }
 
 type TokenClaims struct {
@@ -83,6 +84,8 @@ type TokenClaims struct {
 	Scope        string   `json:"scope,omitempty"`
 	InviteToken  string   `json:"inviteToken,omitempty"`
 	InviteEmails []string `json:"inviteEmails,omitempty"`
+	//TODO: add better structure
+	InviteMeta []string `json:"inviteMeta,omitempty"`
 	jwt.Claims
 }
 type RefreshClaims struct {
@@ -641,7 +644,7 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string) (string, error) {
+func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string, inviteMeta []string) (string, error) {
 	tokenClaims := &TokenClaims{
 		Meta:         meta,
 		Scope:        scope,
@@ -790,7 +793,12 @@ func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
 		s := *result.inviteEmails
 		inviteEmails = strings.Split(s, ",")
 	}
-	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails)
+	var inviteMeta []string
+	if result.inviteMeta != nil {
+		s := *result.inviteMeta
+		inviteMeta = strings.Split(s, ",")
+	}
+	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails, inviteMeta)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

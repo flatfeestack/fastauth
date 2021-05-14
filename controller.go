@@ -37,9 +37,11 @@ type EmailToken struct {
 }
 
 type EmailInvite struct {
-	Email    string    `json:"email"`
-	ExpireAt time.Time `json:"expireAt"`
-	Name     string    `json:"name"`
+	Email       string    `json:"email"`
+	InviteEmail string    `json:"inviteEmail"`
+	ExpireAt    time.Time `json:"expireAt"`
+	Name        string    `json:"name"`
+	Meta        string    `json:"meta"`
 }
 
 type scryptParam struct {
@@ -221,7 +223,7 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 			return
 		}
 
-		err = insertInvite(e.Email, claims.Subject, timeNow())
+		err = insertInvite(e.Email, claims.Subject, e.Meta, timeNow())
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 			return
@@ -232,7 +234,8 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 			log.Printf("No or wrong json, ignoring [%v]", err)
 		}
 
-		encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+claims.InviteToken, 0)
+		encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken, 0)
+		fmt.Printf("TTTTTTT1: %v", claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken)
 
 		other["email"] = e.Email
 		other["url"] = opts.EmailLinkPrefix +
@@ -240,7 +243,8 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 			"/" + emailToken +
 			"/" + url.QueryEscape(claims.Subject) +
 			"/" + e.ExpireAt.Format("2006-01-02") +
-			"/" + base32.StdEncoding.EncodeToString(encInvToken)
+			"/" + base32.StdEncoding.EncodeToString(encInvToken) +
+			"/" + e.Meta
 		other["lang"] = lang(r)
 
 		e := prepareEmail(e.Email, other,
@@ -255,20 +259,22 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 			}
 		}()
 	} else {
-		err = insertInvite(e.Email, claims.Subject, timeNow())
+		err = insertInvite(e.Email, claims.Subject, e.Meta, timeNow())
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 			return
 		}
 
-		encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+claims.InviteToken, 0)
+		encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken, 0)
+		fmt.Printf("TTTTTTT2: %v", claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken)
 
 		other["email"] = e.Email
 		other["url"] = opts.EmailLinkPrefix +
 			"/confirm/invite/" + url.QueryEscape(e.Email) +
 			"/" + url.QueryEscape(claims.Subject) +
 			"/" + e.ExpireAt.Format("2006-01-02") +
-			"/" + base32.StdEncoding.EncodeToString(encInvToken)
+			"/" + base32.StdEncoding.EncodeToString(encInvToken) +
+			"/" + e.Meta
 		other["lang"] = lang(r)
 
 		e := prepareEmail(e.Email, other,
@@ -682,12 +688,12 @@ func checkInvite(cred Credentials) error {
 	}
 
 	//token is contributor email, validity date, sponsor email
-	storedPw, calcPw, err := checkPw(cred.InviteEmail+cred.ExpireAt+res.inviteToken, decoded)
+	storedPw, calcPw, err := checkPw(cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken, decoded)
 	if err != nil {
 		return err
 	}
 	if bytes.Compare(calcPw, storedPw) != 0 {
-		return fmt.Errorf("PW do not match")
+		return fmt.Errorf("invite token is wrong: %v", cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken)
 	}
 
 	layout := "2006-01-02"

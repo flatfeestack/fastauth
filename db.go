@@ -24,10 +24,12 @@ type dbRes struct {
 	errorCount   int
 	meta         *string
 	inviteEmails *string
+	inviteMeta   *string
 }
 
 type dbInvite struct {
 	Email       string     `json:"email"`
+	Meta        string     `json:"meta"`
 	ConfirmedAt *time.Time `json:"confirmedAt"`
 	CreatedAt   time.Time  `json:"createdAt"`
 }
@@ -38,14 +40,18 @@ func findAuthByEmail(email string) (*dbRes, error) {
 	query := `SELECT a.sms, a.password, a.meta, a.refresh_token, a.email_token, 
                      a.invite_token, a.totp, a.sms_verified, a.totp_verified, 
                      a.error_count, 
-                     (SELECT ` + agg("i.invite_email") + ` 
+                     (SELECT ` + agg("i.invite_email") + `
                       FROM invite i 
-                      WHERE i.email=a.email AND i.confirmed_at IS NOT NULL) as invite_emails
+                      WHERE i.email=a.email AND i.confirmed_at IS NOT NULL) as invite_token,
+                     (SELECT ` + agg("i.meta") + `
+                      FROM invite i 
+                      WHERE i.email=a.email AND i.confirmed_at IS NOT NULL) as invite_meta
 			  FROM auth a
               WHERE a.email = $1`
 	err := db.QueryRow(query, email).Scan(
 		&res.sms, &pw, &res.meta, &res.refreshToken, &res.emailToken, &res.inviteToken,
-		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount, &res.inviteEmails)
+		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount, &res.inviteEmails, &res.inviteMeta)
+
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +64,7 @@ func findAuthByEmail(email string) (*dbRes, error) {
 
 func findInvitationsByEmail(email string) ([]dbInvite, error) {
 	var res []dbInvite
-	query := `SELECT email, confirmed_at, created_at 
+	query := `SELECT email, confirmed_at, meta, created_at 
               FROM invite 
               WHERE invite_email=$1`
 	rows, err := db.Query(query, email)
@@ -70,7 +76,7 @@ func findInvitationsByEmail(email string) ([]dbInvite, error) {
 		defer closeAndLog(rows)
 		for rows.Next() {
 			var inv dbInvite
-			err = rows.Scan(&inv.Email, &inv.ConfirmedAt, &inv.CreatedAt)
+			err = rows.Scan(&inv.Email, &inv.ConfirmedAt, &inv.Meta, &inv.CreatedAt)
 			if err != nil {
 				return nil, err
 			}
@@ -104,14 +110,14 @@ func updateInviteToken(email string, inviteToken string) error {
 	return handleErr(res, err, "UPDATE inviteToken", email)
 }
 
-func insertInvite(email string, inviteEmail string, now time.Time) error {
-	stmt, err := db.Prepare("INSERT INTO invite (email, invite_email, created_at) VALUES ($1, $2, $3)")
+func insertInvite(email string, inviteEmail string, meta string, now time.Time) error {
+	stmt, err := db.Prepare("INSERT INTO invite (email, invite_email, meta, created_at) VALUES ($1, $2, $3, $4)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO invite for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email, inviteEmail, now)
+	res, err := stmt.Exec(email, inviteEmail, meta, now)
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 

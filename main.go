@@ -650,6 +650,7 @@ func encodeAccessToken(meta *string, subject string, scope string, audience stri
 		Scope:        scope,
 		InviteToken:  inviteToken,
 		InviteEmails: inviteEmails,
+		InviteMeta:   inviteMeta,
 		Claims: jwt.Claims{
 			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
 			Subject:  subject,

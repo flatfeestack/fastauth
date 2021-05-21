@@ -75,7 +75,7 @@ func confirmEmail(w http.ResponseWriter, r *http.Request) {
 func writeOAuth(w http.ResponseWriter, email string) {
 	result, err := findAuthByEmail(email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-02, update email token for %v failed, %v", email, err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", email, err)
 		return
 	}
 
@@ -696,6 +696,7 @@ func checkInvite(cred Credentials) error {
 		return fmt.Errorf("invite token is wrong: %v", cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken)
 	}
 
+	log.Printf("content: %v", cred)
 	layout := "2006-01-02"
 	t, err := time.Parse(layout, cred.ExpireAt)
 	if err != nil {
@@ -915,33 +916,10 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if grantType == "refresh_token" {
-		err := basic(w, r)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
-			return
-		}
 		refresh(w, r)
 		return
 
 	} else if grantType == "authorization_code" {
-		err := basic(w, r)
-		if err != nil {
-			clientId, err := param("client_id", r)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
-				return
-			}
-			clientSecret, err := param("client_secret", r)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
-				return
-			}
-			if clientId != opts.OAuthUser || clientSecret != opts.OAuthPass {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
-				return
-			}
-		}
-
 		code, err := param("code", r)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
@@ -982,11 +960,6 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 		return
 
 	} else if grantType == "password" && opts.PasswordFlow {
-		err := basic(w, r)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
-			return
-		}
 		email, err := param("username", r)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05a, no username")
@@ -1110,4 +1083,10 @@ func timeWarp(w http.ResponseWriter, r *http.Request) {
 	hoursAdd += hours
 	log.Printf("time warp: %v", timeNow())
 	w.WriteHeader(http.StatusOK)
+}
+
+func asUser(w http.ResponseWriter, r *http.Request, _ string) {
+	m := mux.Vars(r)
+	email := m["email"]
+	writeOAuth(w, email)
 }

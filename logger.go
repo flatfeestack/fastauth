@@ -28,30 +28,18 @@ func inRange(r ipRange, ipAddress net.IP) bool {
 }
 
 var privateRanges = []ipRange{
-	ipRange{
-		start: net.ParseIP("10.0.0.0"),
-		end:   net.ParseIP("10.255.255.255"),
-	},
-	ipRange{
-		start: net.ParseIP("100.64.0.0"),
-		end:   net.ParseIP("100.127.255.255"),
-	},
-	ipRange{
-		start: net.ParseIP("172.16.0.0"),
-		end:   net.ParseIP("172.31.255.255"),
-	},
-	ipRange{
-		start: net.ParseIP("192.0.0.0"),
-		end:   net.ParseIP("192.0.0.255"),
-	},
-	ipRange{
-		start: net.ParseIP("192.168.0.0"),
-		end:   net.ParseIP("192.168.255.255"),
-	},
-	ipRange{
-		start: net.ParseIP("198.18.0.0"),
-		end:   net.ParseIP("198.19.255.255"),
-	},
+	{start: net.ParseIP("10.0.0.0"),
+		end: net.ParseIP("10.255.255.255")},
+	{start: net.ParseIP("100.64.0.0"),
+		end: net.ParseIP("100.127.255.255")},
+	{start: net.ParseIP("172.16.0.0"),
+		end: net.ParseIP("172.31.255.255")},
+	{start: net.ParseIP("192.0.0.0"),
+		end: net.ParseIP("192.0.0.255")},
+	{start: net.ParseIP("192.168.0.0"),
+		end: net.ParseIP("192.168.255.255")},
+	{start: net.ParseIP("198.18.0.0"),
+		end: net.ParseIP("198.19.255.255")},
 }
 
 // LogReqInfo describes info about HTTP request
@@ -92,16 +80,6 @@ func logRequestHandler(h http.Handler) http.Handler {
 		logHTTPReq(ri)
 	}
 	return http.HandlerFunc(fn)
-}
-
-// Request.RemoteAddress contains port, which we want to remove i.e.:
-// "[::1]:58292" => "[::1]"
-func ipAddrFromRemoteAddr(s string) string {
-	idx := strings.LastIndex(s, ":")
-	if idx == -1 {
-		return s
-	}
-	return s[:idx]
 }
 
 func getIPAdress(r *http.Request) string {
@@ -150,11 +128,12 @@ func logHTTPReq(ri *HTTPReqInfo) {
 	uri := strings.Replace(ri.uri, `"`, `""`, -1)
 	userAgent := strings.Replace(ri.userAgent, `"`, `""`, -1)
 
-	msg := ri.ipaddr + `,` +
+	msg := `[` +
+		strconv.Itoa(ri.code) + `],` +
+		ri.ipaddr + `,` +
 		strconv.Itoa(int(ri.duration.Milliseconds())) + `ms,` +
 		ri.method + `,"` +
 		uri + `",` +
-		strconv.Itoa(ri.code) + `,` +
 		strconv.FormatInt(ri.size, 10) + `,"` +
 		referer + `","` +
 		userAgent + `"` + "\n"

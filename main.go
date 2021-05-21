@@ -54,6 +54,7 @@ var (
 	codeExp      time.Duration
 	hoursAdd     int
 	logFile      *dailyrotate.File
+	admins       []string
 )
 
 type Credentials struct {
@@ -146,6 +147,7 @@ type Opts struct {
 	PasswordFlow    bool
 	Scope           string
 	LogPath         string
+	Admins          string
 }
 
 func NewOpts() *Opts {
@@ -194,7 +196,8 @@ func NewOpts() *Opts {
 	flag.BoolVar(&opts.PasswordFlow, "pwflow", lookupEnv("PWFLOW") != "", "enable password flow, default disabled")
 	flag.StringVar(&opts.Scope, "scope", lookupEnv("SCOPE"), "scope, default in dev is my-scope")
 	flag.StringVar(&opts.LogPath, "log", lookupEnv("LOG",
-		os.TempDir()+"/fastauth"), "Log directory, default is /tmp/fastauth")
+		os.TempDir()+"/ffs"), "Log directory, default is /tmp/ffs")
+	flag.StringVar(&opts.Admins, "admins", lookupEnv("ADMINS"), "Admins")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -256,6 +259,10 @@ func NewOpts() *Opts {
 		log.Printf("DEV mode active, eddsa is hex(%v)", opts.EdDSA)
 	}
 
+	if opts.Admins != "" {
+		admins = strings.Split(opts.Admins, ";")
+	}
+
 	if opts.HS256 == "" && opts.RS256 == "" && opts.EdDSA == "" {
 		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory. Choose one\n")
 		flag.PrintDefaults()
@@ -311,6 +318,13 @@ func NewOpts() *Opts {
 		opts.EmailFromName = ""
 	}
 
+	pathFormat := filepath.Join(opts.LogPath, "auth_2006-01-02.txt")
+	w, err := dailyrotate.NewFile(pathFormat, func(string, bool) {})
+	if err != nil {
+		log.Fatalf("cannot log")
+	}
+	logFile = w
+
 	return opts
 }
 
@@ -341,85 +355,6 @@ func lookupEnvInt(key string, defaultValues ...int) int {
 		}
 	}
 	return 0
-}
-
-func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClaims)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		authorizationHeader := r.Header.Get("Authorization")
-		if authorizationHeader != "" {
-			bearerToken := strings.Split(authorizationHeader, " ")
-			if len(bearerToken) == 2 {
-
-				tok, err := jwt.ParseSigned(bearerToken[1])
-				if err != nil {
-					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-auth-01, could not parse token: %v", bearerToken[1])
-					return
-				}
-
-				claims := &TokenClaims{}
-
-				if tok.Headers[0].Algorithm == string(jose.RS256) {
-					err = tok.Claims(privRSA.Public(), claims)
-				} else if tok.Headers[0].Algorithm == string(jose.HS256) {
-					err = tok.Claims(jwtKey, claims)
-				} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
-					err = tok.Claims(privEdDSA.Public(), claims)
-				} else {
-					writeErr(w, http.StatusBadRequest, "invalid_client", "blocked", "ERR-auth-02, unknown algo: %v", bearerToken[1])
-					return
-				}
-
-				if err != nil {
-					writeErr(w, http.StatusBadRequest, "invalid_client", "blocked", "ERR-auth-02, could not parse claims: %v", bearerToken[1])
-					return
-				}
-
-				if claims.Expiry != nil && !claims.Expiry.Time().After(timeNow()) {
-					writeErr(w, http.StatusUnauthorized, "invalid_client", "refused", "ERR-auth-03, expired: %v", bearerToken[1])
-					return
-				}
-
-				next(w, r, claims)
-				return
-			} else {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-auth-04, could not split token: %v", bearerToken)
-				return
-			}
-		}
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-auth-05, authorization header not set")
-		return
-	}
-}
-
-func checkRefreshToken(token string) (*RefreshClaims, error) {
-	tok, err := jwt.ParseSigned(token)
-	if err != nil {
-		return nil, fmt.Errorf("ERR-check-refresh-01, could not check sig %v", err)
-	}
-	refreshClaims := &RefreshClaims{}
-	if tok.Headers[0].Algorithm == string(jose.RS256) {
-		err := tok.Claims(privRSA.Public(), refreshClaims)
-		if err != nil {
-			return nil, fmt.Errorf("ERR-check-refresh-02, could not parse claims %v", err)
-		}
-	} else if tok.Headers[0].Algorithm == string(jose.HS256) {
-		err := tok.Claims(jwtKey, refreshClaims)
-		if err != nil {
-			return nil, fmt.Errorf("ERR-check-refresh-03, could not parse claims %v", err)
-		}
-	} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
-		err := tok.Claims(privEdDSA.Public(), refreshClaims)
-		if err != nil {
-			return nil, fmt.Errorf("ERR-check-refresh-04, could not parse claims %v", err)
-		}
-	} else {
-		return nil, fmt.Errorf("ERR-check-refresh-05, could not parse claims, no algo found %v", tok.Headers[0].Algorithm)
-	}
-	t := time.Unix(refreshClaims.ExpiresAt, 0)
-	if !t.After(timeNow()) {
-		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
-	}
-	return refreshClaims, nil
 }
 
 func checkEmailPassword(email string, password string) (*dbRes, string, error) {
@@ -533,14 +468,16 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 
 	if opts.OauthEndpoints {
 		router.HandleFunc("/oauth/login", login).Methods(http.MethodPost)
-		router.HandleFunc("/oauth/token", oauth).Methods(http.MethodPost)
+		router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/authorize", authorize).Methods(http.MethodGet)
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 	}
 
-	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[404] no route matched for: %v", r.URL)
+	router.HandleFunc("/admin/login-as/{email}", jwtAuthAdmin(asUser, admins)).Methods(http.MethodPost)
+
+	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[404] no route matched for: %s, %s", r.URL, r.Method)
 		w.WriteHeader(http.StatusNotFound)
 	})
 
@@ -644,233 +581,29 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string, inviteMeta []string) (string, error) {
-	tokenClaims := &TokenClaims{
-		Meta:         meta,
-		Scope:        scope,
-		InviteToken:  inviteToken,
-		InviteEmails: inviteEmails,
-		InviteMeta:   inviteMeta,
-		Claims: jwt.Claims{
-			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
-			Subject:  subject,
-			Audience: []string{audience},
-			Issuer:   issuer,
-			IssuedAt: jwt.NewNumericDate(timeNow()),
-		},
-	}
-
-	var sig jose.Signer
-	var err error
-	if jwtKey != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
-	} else if privRSA != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if privEdDSA != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
-	} else {
-		return "", fmt.Errorf("JWT access token %v no key", tokenClaims.Subject)
-	}
-
-	if err != nil {
-		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
-	}
-	accessTokenString, err := jwt.Signed(sig).Claims(tokenClaims).CompactSerialize()
-	if err != nil {
-		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
-	}
-	if opts.Dev != "" {
-		log.Printf("Access token: [%s]", accessTokenString)
-	}
-	return accessTokenString, nil
-}
-
-func encodeRefreshToken(subject string, token string) (string, int64, error) {
-	rc := &RefreshClaims{}
-	rc.Subject = subject
-	rc.ExpiresAt = timeNow().Add(refreshExp).Unix()
-	rc.Token = token
-
-	var sig jose.Signer
-	var err error
-	if jwtKey != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
-	} else if privRSA != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if privEdDSA != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
-	} else {
-		return "", 0, fmt.Errorf("JWT refresh token %v no key", subject)
-	}
-
-	if err != nil {
-		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
-	}
-	refreshToken, err := jwt.Signed(sig).Claims(rc).CompactSerialize()
-	if err != nil {
-		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
-	}
-	if opts.Dev != "" {
-		log.Printf("Refresh token: [%s]", refreshToken)
-	}
-	return refreshToken, rc.ExpiresAt, nil
-}
-
-func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod string) (string, int64, error) {
-	cc := &CodeClaims{}
-	cc.Subject = subject
-	cc.ExpiresAt = timeNow().Add(codeExp).Unix()
-	cc.CodeChallenge = codeChallenge
-	cc.CodeCodeChallengeMethod = codeChallengeMethod
-
-	var sig jose.Signer
-	var err error
-	if jwtKey != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: jwtKey}, (&jose.SignerOptions{}).WithType("JWT"))
-	} else if privRSA != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privRSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privRSAKid))
-	} else if privEdDSA != nil {
-		sig, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: *privEdDSA}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", privEdDSAKid))
-	} else {
-		return "", 0, fmt.Errorf("JWT refresh token %v no key", subject)
-	}
-
-	if err != nil {
-		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
-	}
-	codeToken, err := jwt.Signed(sig).Claims(cc).CompactSerialize()
-	if err != nil {
-		return "", 0, fmt.Errorf("JWT refresh token %v failed: %v", subject, err)
-	}
-	if opts.Dev != "" {
-		log.Printf("Code token: [%s]", codeToken)
-	}
-	return codeToken, cc.ExpiresAt, nil
-}
-
-/*
- If the option ResetRefresh is set, then every time this function is called, which is
- before the createRefreshToken, then the refresh token is renewed and the old one is
- not valid anymore.
-
- This function is also used in case of revoking a token, where a new token is created,
- but not returned to the user, so the user has to login to get the refresh token
-*/
-func resetRefreshToken(oldToken string, email string) (string, error) {
-	newToken, err := genToken()
-	if err != nil {
-		return "", err
-	}
-	err = updateRefreshToken(email, oldToken, newToken)
-	if err != nil {
-		return "", err
-	}
-	return newToken, nil
-}
-
-func checkRefresh(email string, token string) (string, string, int64, error) {
-	result, err := findAuthByEmail(email)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-03, DB select, %v err %v", email, err)
-	}
-
-	if result.emailToken != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-04, user %v no email verified: %v", email, err)
-	}
-
-	if result.refreshToken == "" || token != result.refreshToken {
-		if opts.Dev != "" {
-			log.Printf("refresh token mismatch %v != %v", token, result.refreshToken)
-		}
-		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch")
-
-	}
-	return encodeTokens(result, email)
-}
-
-func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	var inviteEmails []string
-	if result.inviteEmails != nil {
-		s := *result.inviteEmails
-		inviteEmails = strings.Split(s, ",")
-	}
-	var inviteMeta []string
-	if result.inviteMeta != nil {
-		s := *result.inviteMeta
-		inviteMeta = strings.Split(s, ",")
-	}
-	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails, inviteMeta)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
-	}
-
-	refreshToken := result.refreshToken
-	if opts.ResetRefresh {
-		refreshToken, err = resetRefreshToken(refreshToken, email)
-		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
-		}
-	}
-
-	encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", email, err)
-	}
-	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
-}
-
-func checkCodeToken(token string) (*CodeClaims, error) {
-	tok, err := jwt.ParseSigned(token)
-	if err != nil {
-		return nil, fmt.Errorf("ERR-check-refresh-01, could not check sig %v", err)
-	}
-	codeClaims := &CodeClaims{}
-	if tok.Headers[0].Algorithm == string(jose.RS256) {
-		err := tok.Claims(privRSA.Public(), codeClaims)
-		if err != nil {
-			return nil, fmt.Errorf("ERR-check-refresh-02, could not parse claims %v", err)
-		}
-	} else if tok.Headers[0].Algorithm == string(jose.HS256) {
-		err := tok.Claims(jwtKey, codeClaims)
-		if err != nil {
-			return nil, fmt.Errorf("ERR-check-refresh-03, could not parse claims %v", err)
-		}
-	} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
-		err := tok.Claims(privEdDSA.Public(), codeClaims)
-		if err != nil {
-			return nil, fmt.Errorf("ERR-check-refresh-04, could not parse claims %v", err)
-		}
-	} else {
-		return nil, fmt.Errorf("ERR-check-refresh-05, could not parse claims, no algo found %v", tok.Headers[0].Algorithm)
-	}
-	t := time.Unix(codeClaims.ExpiresAt, 0)
-	if !t.After(timeNow()) {
-		return nil, fmt.Errorf("ERR-check-refresh-06, expired %v", err)
-	}
-	return codeClaims, nil
-}
-
 func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if opts.OAuthUser != "" || opts.OAuthPass != "" {
 			user, pass, ok := r.BasicAuth()
 			if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
-				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-basic-auth-01, could not check user/pass: %v", user)
-				return
+				clientId, err := param("client_id", r)
+				if err != nil {
+					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+					return
+				}
+				clientSecret, err := param("client_secret", r)
+				if err != nil {
+					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
+					return
+				}
+				if clientId != opts.OAuthUser || clientSecret != opts.OAuthPass {
+					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
+					return
+				}
 			}
 		}
 		next(w, r)
 	}
-}
-
-func basic(_ http.ResponseWriter, r *http.Request) error {
-	if opts.OAuthUser != "" || opts.OAuthPass != "" {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
-			return fmt.Errorf("ERR-basic-auth-01, could not check user/pass: %v", user)
-		}
-	}
-	return nil
 }
 
 func param(name string, r *http.Request) (string, error) {
@@ -932,12 +665,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("os.MkdirAll()")
 	}
-	pathFormat := filepath.Join(opts.LogPath, "2006-01-02.txt")
-	w, err := dailyrotate.NewFile(pathFormat, func(string, bool) {})
-	if err != nil {
-		log.Fatalf("cannot log")
-	}
-	logFile = w
 
 	//db: init the database
 	db, err = initDB()

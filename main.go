@@ -170,7 +170,8 @@ func NewOpts() *Opts {
 		"sqlite3"), "DB driver")
 	flag.StringVar(&opts.DBScripts, "db-scripts", lookupEnv("DB_SCRIPTS"), "DB scripts to run at startup")
 	flag.StringVar(&opts.EmailFrom, "email-from", lookupEnv("EMAIL_FROM"), "Email from, default is info@flatfeestack.io")
-	flag.StringVar(&opts.EmailFromName, "email-from-name", lookupEnv("EMAIL_FROM_NAME"), "Email from name, default is a empty string")
+	flag.StringVar(&opts.EmailFromName, "email-from-name", lookupEnv("EMAIL_FROM_NAME",
+		"email@fastauth"), "Email from name, default is a empty string")
 	flag.StringVar(&opts.EmailUrl, "email-url", lookupEnv("EMAIL_URL"), "Email service URL")
 	flag.StringVar(&opts.EmailToken, "email-token", lookupEnv("EMAIL_TOKEN"), "Email service token")
 	flag.StringVar(&opts.EmailLinkPrefix, "email-prefix", lookupEnv("EMAIL_PREFIX"), "Email link prefix")
@@ -259,9 +260,7 @@ func NewOpts() *Opts {
 		log.Printf("DEV mode active, eddsa is hex(%v)", opts.EdDSA)
 	}
 
-	if opts.Admins != "" {
-		admins = strings.Split(opts.Admins, ";")
-	}
+	admins = strings.Split(opts.Admins, ";")
 
 	if opts.HS256 == "" && opts.RS256 == "" && opts.EdDSA == "" {
 		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory. Choose one\n")
@@ -308,14 +307,6 @@ func NewOpts() *Opts {
 			log.Fatalf("cannot thumb eddsa %v", err)
 		}
 		privEdDSAKid = hex.EncodeToString(kid)
-	}
-
-	if opts.EmailFrom == "" {
-		opts.EmailFrom = "info@flatfeestack.io"
-	}
-
-	if opts.EmailFromName == "" {
-		opts.EmailFromName = ""
 	}
 
 	pathFormat := filepath.Join(opts.LogPath, "auth_2006-01-02.txt")

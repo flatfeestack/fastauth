@@ -655,18 +655,18 @@ func confirmInvite(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
 	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-01, cannot parse JSON credentials %v", err)
 		return
 	}
 	err = checkInvite(cred)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-02, cannot parse JSON credentials %v", err)
 		return
 	}
 
 	err = updateConfirmInviteAt(cred.Email, cred.InviteEmail, timeNow())
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-03, update user failed: %v", err)
 		return
 	}
 }

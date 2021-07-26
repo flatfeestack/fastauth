@@ -50,7 +50,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 
 	//upload size
-	err := r.ParseMultipartForm(1 << 24) // 16MB limit for the file
+	err := r.ParseMultipartForm(1 << 26) // 64MB limit for the file
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ERR-02, cannot parse file: %v", err)
 		return
@@ -64,6 +64,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 	defer file.Close()
 
+	log.Printf("upload file %v to: %v", file, options.Basedir+"/"+claims.Directory)
 	err = Untar(file, options.Basedir+"/"+claims.Directory)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ERR-04, error untaring the file: %v", err)
@@ -131,6 +132,7 @@ func NewOpts() *Opts {
 	if err != nil {
 		log.Printf("Could not find env file [%v], using defaults", err)
 	}
+	err = nil
 
 	opts := &Opts{}
 	flag.StringVar(&opts.Env, "env", lookupEnv("ENV"), "ENV variable")
@@ -145,7 +147,11 @@ func NewOpts() *Opts {
 
 	//defaults
 	if opts.HS256 != "" {
-		jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
+		if strings.Index(opts.HS256, "0x") == 0 {
+			jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
+		} else {
+			jwtKey = []byte(opts.HS256)
+		}
 		if err != nil {
 			log.Fatalf("cannot decode %v", opts.HS256)
 		}

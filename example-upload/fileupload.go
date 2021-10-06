@@ -50,7 +50,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 
 	//upload size
-	err := r.ParseMultipartForm(1 << 26) // 64MB limit for the file
+	err := r.ParseMultipartForm(1 << 29) // 512MB limit for the file
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "ERR-02, cannot parse file: %v", err)
 		return

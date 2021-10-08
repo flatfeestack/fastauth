@@ -81,14 +81,17 @@ type Credentials struct {
 }
 
 type TokenClaims struct {
-	Meta         *string  `json:"meta,omitempty"`
 	Scope        string   `json:"scope,omitempty"`
 	InviteToken  string   `json:"inviteToken,omitempty"`
 	InviteEmails []string `json:"inviteEmails,omitempty"`
 	//TODO: add better structure
 	InviteMeta []string `json:"inviteMeta,omitempty"`
 	jwt.Claims
+	additionalClaims
 }
+
+type additionalClaims map[string]interface{}
+
 type RefreshClaims struct {
 	ExpiresAt int64  `json:"exp,omitempty"`
 	Subject   string `json:"role,omitempty"`

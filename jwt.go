@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
@@ -58,7 +59,7 @@ func jwtAuth0(r *http.Request) (*TokenClaims, error) {
 		return nil, fmt.Errorf("ERR-03, could not parse token: %v", bearerToken[1])
 	}
 
-	claims := &TokenClaims{}
+	claims := &TokenClaims{additionalClaims: make(map[string]interface{})}
 
 	if tok.Headers[0].Algorithm == string(jose.RS256) {
 		err = tok.Claims(privRSA.Public(), claims)
@@ -115,9 +116,8 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 	return refreshClaims, nil
 }
 
-func encodeAccessToken(meta *string, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string, inviteMeta []string) (string, error) {
+func encodeAccessToken(additionalClaims map[string]interface{}, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string, inviteMeta []string) (string, error) {
 	tokenClaims := &TokenClaims{
-		Meta:         meta,
 		Scope:        scope,
 		InviteToken:  inviteToken,
 		InviteEmails: inviteEmails,
@@ -130,6 +130,8 @@ func encodeAccessToken(meta *string, subject string, scope string, audience stri
 			IssuedAt: jwt.NewNumericDate(timeNow()),
 		},
 	}
+
+	tokenClaims.additionalClaims = additionalClaims
 
 	var sig jose.Signer
 	var err error
@@ -239,7 +241,16 @@ func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
 		s := *result.inviteMeta
 		inviteMeta = strings.Split(s, ",")
 	}
-	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails, inviteMeta)
+
+	jsonMap := make(map[string]interface{})
+	if result.meta != nil {
+		err := json.Unmarshal([]byte(*result.meta), &jsonMap)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
+		}
+	}
+
+	encodedAccessToken, err := encodeAccessToken(jsonMap, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails, inviteMeta)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

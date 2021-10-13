@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"encoding/base32"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -22,36 +24,35 @@ type dbRes struct {
 	totp         *string
 	totpVerified *time.Time
 	errorCount   int
-	meta         *string
-	inviteEmails *string
-	inviteMeta   *string
+	meta         map[string]string
+	invites      []dbInvite
 }
 
 type dbInvite struct {
-	Email       string     `json:"email"`
-	Meta        string     `json:"meta"`
-	ConfirmedAt *time.Time `json:"confirmedAt"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	email       string
+	meta        map[string]string
+	confirmedAt *time.Time
+	createdAt   time.Time
 }
 
 func findAuthByEmail(email string) (*dbRes, error) {
 	var res dbRes
 	var pw string
-	query := `SELECT a.sms, a.password, a.meta, a.refresh_token, a.email_token, 
-                     a.invite_token, a.totp, a.sms_verified, a.totp_verified, 
-                     a.error_count, 
-                     (SELECT ` + agg("i.invite_email") + `
-                      FROM invite i 
-                      WHERE i.email=a.email AND i.confirmed_at IS NOT NULL) as invite_token,
-                     (SELECT ` + agg("i.meta") + `
-                      FROM invite i 
-                      WHERE i.email=a.email AND i.confirmed_at IS NOT NULL) as invite_meta
-			  FROM auth a
-              WHERE a.email = $1`
-	err := db.QueryRow(query, email).Scan(
-		&res.sms, &pw, &res.meta, &res.refreshToken, &res.emailToken, &res.inviteToken,
-		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount, &res.inviteEmails, &res.inviteMeta)
+	var jsonStr string
 
+	query := `SELECT sms, password, meta, refresh_token, email_token, 
+                     invite_token, totp, sms_verified, totp_verified, error_count  
+			  FROM auth
+              WHERE email = $1`
+
+	err := db.QueryRow(query, email).Scan(
+		&res.sms, &pw, &jsonStr, &res.refreshToken, &res.emailToken, &res.inviteToken,
+		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal([]byte(jsonStr), &res.meta)
 	if err != nil {
 		return nil, err
 	}
@@ -59,11 +60,21 @@ func findAuthByEmail(email string) (*dbRes, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	//fetch invites
+	dbInvites, err := findInvitationsByEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	res.invites = dbInvites
+
 	return &res, nil
 }
 
 func findInvitationsByEmail(email string) ([]dbInvite, error) {
-	var res []dbInvite
+	var results []dbInvite
+	var jsonStr string
+
 	query := `SELECT email, confirmed_at, meta, created_at 
               FROM invite 
               WHERE invite_email=$1`
@@ -75,17 +86,32 @@ func findInvitationsByEmail(email string) ([]dbInvite, error) {
 	case nil:
 		defer closeAndLog(rows)
 		for rows.Next() {
-			var inv dbInvite
-			err = rows.Scan(&inv.Email, &inv.ConfirmedAt, &inv.Meta, &inv.CreatedAt)
+			var res dbInvite
+			err = rows.Scan(&res.email, &res.confirmedAt, &jsonStr, &res.createdAt)
 			if err != nil {
 				return nil, err
 			}
-			res = append(res, inv)
+			err = json.Unmarshal([]byte(jsonStr), &res.meta)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, res)
 		}
-		return res, nil
+		return results, nil
 	default:
 		return nil, err
 	}
+}
+
+func deleteUserDb(email string) error {
+	stmt, err := db.Prepare("DELETE FROM auth WHERE email = $1")
+	if err != nil {
+		return fmt.Errorf("prepare DELETE FROM auth %v statement failed: %v", email, err)
+	}
+	defer closeAndLog(stmt)
+
+	res, err := stmt.Exec(email)
+	return handleErr(res, err, "DELETE auth", email)
 }
 
 func deleteInvite(myEmail string, inviteEmail string) error {
@@ -110,18 +136,23 @@ func updateInviteToken(email string, inviteToken string) error {
 	return handleErr(res, err, "UPDATE inviteToken", email)
 }
 
-func insertInvite(email string, inviteEmail string, meta string, now time.Time) error {
+func insertInvite(email string, inviteEmail string, meta map[string]string, now time.Time) error {
 	stmt, err := db.Prepare("INSERT INTO invite (email, invite_email, meta, created_at) VALUES ($1, $2, $3, $4)")
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO invite for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email, inviteEmail, meta, now)
-	return handleErr(res, err, "INSERT INTO auth", email)
+	metaJson, err := jsonToMeta(meta)
+	if err != nil {
+		return fmt.Errorf("prepare INSERT INTO invite for %v statement failed: %v", email, err)
+	}
+
+	res, err := stmt.Exec(email, inviteEmail, metaJson, now)
+	return handleErr(res, err, "INSERT INTO invite", email)
 }
 
-func insertUser(email string, pwRaw []byte, meta *string, emailToken string, refreshToken string, inviteToken string, now time.Time) error {
+func insertUser(email string, pwRaw []byte, meta map[string]string, emailToken string, refreshToken string, inviteToken string, now time.Time) error {
 	pw := base32.StdEncoding.EncodeToString(pwRaw)
 	stmt, err := db.Prepare("INSERT INTO auth (email, password, meta, email_token, refresh_token, invite_token, created_at) " +
 		"VALUES ($1, $2, $3, $4, $5, $6, $7)")
@@ -130,7 +161,12 @@ func insertUser(email string, pwRaw []byte, meta *string, emailToken string, ref
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email, pw, meta, emailToken, refreshToken, inviteToken, now)
+	metaJson, err := jsonToMeta(meta)
+	if err != nil {
+		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
+	}
+
+	res, err := stmt.Exec(email, pw, metaJson, emailToken, refreshToken, inviteToken, now)
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
@@ -168,27 +204,26 @@ func updateConfirmInviteAt(email string, inviteEmail string, now time.Time) erro
 	return handleErr(res, err, "UPDATE invite", email)
 }
 
-func updatePasswordForgot(email string, forgetEmailToken string, newPw []byte) error {
+func updatePasswordForgot(email string, forgetEmailToken string, newPw []byte, now time.Time) error {
 	pw := base32.StdEncoding.EncodeToString(newPw)
-	stmt, err := db.Prepare("UPDATE auth SET password = $1, totp = NULL, sms = NULL, forget_email_token = NULL WHERE email = $2 AND forget_email_token = $3")
+	stmt, err := db.Prepare("UPDATE auth SET password = $1, totp = NULL, sms = NULL, forget_email_token = NULL WHERE email = $2 AND forget_email_token = $3 AND forget_email_at > $4")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(pw, email, forgetEmailToken)
+	res, err := stmt.Exec(pw, email, forgetEmailToken, now)
 	return handleErr(res, err, "UPDATE auth password", email)
 }
 
-func updateEmailForgotToken(email string, token string) error {
-	//TODO: don't accept too old forget tokens
-	stmt, err := db.Prepare("UPDATE auth SET forget_email_token = $1 WHERE email = $2")
+func updateEmailForgotToken(email string, token string, expireAt time.Time) error {
+	stmt, err := db.Prepare("UPDATE auth SET forget_email_token = $1, forget_email_at = $2 WHERE email = $3")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth forgetEmailToken for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(token, email)
+	res, err := stmt.Exec(token, expireAt, email)
 	return handleErr(res, err, "UPDATE auth forgetEmailToken", email)
 }
 
@@ -247,6 +282,28 @@ func updateTOTPVerified(email string, now time.Time) error {
 	return handleErr(res, err, "UPDATE auth totp timestamp", email)
 }
 
+func updateMeta(email string, additionalClaims map[string]string) error {
+	stmt, err := db.Prepare("UPDATE auth SET meta = $1 WHERE email = $2")
+	if err != nil {
+		return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
+	}
+	defer closeAndLog(stmt)
+
+	var jsonStr string
+	if additionalClaims == nil {
+		jsonStr = "{}"
+	} else {
+		jsonByte, err := json.Marshal(additionalClaims)
+		if err != nil {
+			return fmt.Errorf("prepare UPDATE auth for %v statement failed: %v", email, err)
+		}
+		jsonStr = string(jsonByte)
+	}
+
+	res, err := stmt.Exec(string(jsonStr), email)
+	return handleErr(res, err, "UPDATE auth totp timestamp", email)
+}
+
 func incErrorCount(email string) error {
 	stmt, err := db.Prepare("UPDATE auth set error_count = error_count + 1 WHERE email = $1")
 	if err != nil {
@@ -282,9 +339,9 @@ func handleErr(res sql.Result, err error, info string, email string) error {
 
 ///////// Setup
 
-func addInitialUserWithMeta(username string, password string, meta *string) error {
+func addInitialUserWithMeta(username string, password string, meta map[string]string) error {
 	res, err := findAuthByEmail(username)
-	if res == nil || err != nil {
+	if res == nil || err == sql.ErrNoRows {
 		dk, err := newPw(password, 0)
 		if err != nil {
 			return err
@@ -332,29 +389,44 @@ func initDB() (*sql.DB, error) {
 	return db, nil
 }
 
+//use: https://jsonformatter.org/json-to-base64
 func setupDB() {
 	if opts.Users != "" {
 		//add user for development
-		users := strings.Split(opts.Users, ";")
+		users := strings.Split(opts.Users, ":")
 		for _, user := range users {
-			userPwMeta := strings.Split(user, ":")
+			userPwMeta := strings.Split(user, ";")
+			var err error
 			if len(userPwMeta) == 2 {
-				err := addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], nil)
-				if err == nil {
-					log.Printf("insterted user %v", userPwMeta[0])
-				} else {
-					log.Printf("could not insert %v: %v", userPwMeta[0], err)
+				err = addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], nil)
+				if err != nil {
+					log.Printf("could not instert user %v, %v", userPwMeta[0], err)
 				}
-			} else if len(userPwMeta) == 3 {
-				meta := userPwMeta[2]
-				err := addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], &meta)
-				if err == nil {
-					log.Printf("insterted user %v", userPwMeta[0])
-				} else {
-					log.Printf("could not insert %v: %v", userPwMeta[0], err)
+			} else if len(userPwMeta) > 2 {
+				jsonStr, err := base64.StdEncoding.DecodeString(userPwMeta[2])
+				if err != nil {
+					log.Printf("could not decode base64 %v, %v", userPwMeta[0], err)
 				}
+
+				var all map[string]string
+				err = json.Unmarshal(jsonStr, &all)
+				if err != nil {
+					log.Printf("could not decode meta %v, %v", userPwMeta[0], err)
+				}
+
+				err = addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], all)
+				if err != nil {
+					log.Printf("could not instert user %v, %v", userPwMeta[0], err)
+				}
+
 			} else {
 				log.Printf("username and password need to be seperated by ':'")
+			}
+
+			if err == nil {
+				log.Printf("insterted user %v", userPwMeta[0])
+			} else {
+				log.Printf("could not insert %v: %v", userPwMeta[0], err)
 			}
 		}
 	}
@@ -365,12 +437,4 @@ func closeAndLog(c io.Closer) {
 	if err != nil {
 		log.Printf("could not close: %v", err)
 	}
-}
-
-func agg(column string) string {
-	agg := "string_agg(" + column + ", ',')"
-	if opts.DBDriver == "sqlite3" {
-		agg = "group_concat(" + column + ", ',')"
-	}
-	return agg
 }

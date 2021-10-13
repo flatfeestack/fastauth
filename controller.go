@@ -10,12 +10,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/gorilla/schema"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/text/language"
 	"gopkg.in/square/go-jose.v2"
 	"html/template"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -24,6 +22,7 @@ import (
 	"time"
 )
 
+//send email
 type EmailRequest struct {
 	MailTo      string `json:"mail_to,omitempty"`
 	Subject     string `json:"subject"`
@@ -31,17 +30,19 @@ type EmailRequest struct {
 	HtmlMessage string `json:"html_message"`
 }
 
+//confirmEmailPost
 type EmailToken struct {
 	Email string `json:"email"`
 	Token string `json:"token"`
 }
 
+//inviteOther
 type EmailInvite struct {
-	Email       string    `json:"email"`
-	InviteEmail string    `json:"inviteEmail"`
-	ExpireAt    time.Time `json:"expireAt"`
-	Name        string    `json:"name"`
-	Meta        string    `json:"meta"`
+	Email       string            `json:"email"`
+	InviteEmail string            `json:"inviteEmail"`
+	ExpireAt    time.Time         `json:"expireAt"`
+	Name        string            `json:"name"`
+	MetaData    map[string]string `json:"metaData,omitempty"`
 }
 
 type scryptParam struct {
@@ -142,44 +143,38 @@ func invitations(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	w.Write(oauthEnc)
 }
 
-func inviteOtherDelete(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+func inviteDelete(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	//delete the invite from me of other users
 	vars := mux.Vars(r)
-	email, err := url.QueryUnescape(vars["email"])
+	inviterEmail, err := url.QueryUnescape(vars["inviterEmail"])
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-	err = deleteInvite(email, claims.Subject)
+	inviteeEmail, err := url.QueryUnescape(vars["inviteeEmail"])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-}
+	if claims.Subject == inviterEmail || claims.Subject == inviteeEmail {
+		err = deleteInvite(inviterEmail, inviteeEmail)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+			return
+		}
+	} else {
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+			return
+		}
+	}
 
-func inviteMyDelete(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
-	vars := mux.Vars(r)
-	email, err := url.QueryUnescape(vars["email"])
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
-		return
-	}
-	err = deleteInvite(claims.Subject, email)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
-		return
-	}
 	w.WriteHeader(http.StatusOK)
 }
 
 func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
-	buf, _ := ioutil.ReadAll(r.Body)
-	rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
-	rdr2 := ioutil.NopCloser(bytes.NewBuffer(buf))
-
 	var e EmailInvite
-	err := json.NewDecoder(rdr1).Decode(&e)
+	err := json.NewDecoder(r.Body).Decode(&e)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-01, cannot parse JSON credentials %v", err)
 		return
@@ -196,10 +191,14 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		return
 	}
 
-	other := map[string]string{}
+	metaJson, err := jsonToMeta(e.MetaData)
+	metaBase64 := base64.StdEncoding.EncodeToString([]byte(metaJson))
+
 	_, err = findAuthByEmail(e.Email)
+	var emailToken string
+	other := map[string]string{}
 	if err != nil {
-		emailToken, err := genToken()
+		emailToken, err = genToken()
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", e.Email, err)
 			return
@@ -217,90 +216,51 @@ func inviteOther(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 			return
 		}
 
-		err = insertUser(e.Email, nil, nil, emailToken, refreshToken, inviteToken, timeNow())
+		err = insertUser(e.Email, nil, opts.MetaData, emailToken, refreshToken, inviteToken, timeNow())
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
 			return
 		}
-
-		err = insertInvite(e.Email, claims.Subject, e.Meta, timeNow())
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
-			return
-		}
-
-		err = json.NewDecoder(rdr2).Decode(&other)
-		if err != nil {
-			log.Printf("No or wrong json, ignoring [%v]", err)
-		}
-
-		encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken, 0)
-		fmt.Printf("TTTTTTT1: %v", claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken)
-
-		other["email"] = e.Email
-		other["url"] = opts.EmailLinkPrefix +
-			"/confirm/invite-new/" + url.QueryEscape(e.Email) +
-			"/" + emailToken +
-			"/" + url.QueryEscape(claims.Subject) +
-			"/" + e.ExpireAt.Format("2006-01-02") +
-			"/" + base32.StdEncoding.EncodeToString(encInvToken) +
-			"/" + e.Meta
-		other["lang"] = lang(r)
-
-		e := prepareEmail(e.Email, other,
-			"template-subject-invite-new_", "You have been invited, activate your account",
-			"template-plain-invite-new_", "Click on this link: "+other["url"],
-			"template-html-invite-new_", other["lang"])
-
-		go func() {
-			err = sendEmail(opts.EmailUrl, e)
-			if err != nil {
-				log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
-			}
-		}()
 	} else {
-		err = insertInvite(e.Email, claims.Subject, e.Meta, timeNow())
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
-			return
-		}
-
-		encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken, 0)
-		fmt.Printf("TTTTTTT2: %v", claims.Subject+e.ExpireAt.Format("2006-01-02")+e.Meta+claims.InviteToken)
-
-		other["email"] = e.Email
-		other["url"] = opts.EmailLinkPrefix +
-			"/confirm/invite/" + url.QueryEscape(e.Email) +
-			"/" + url.QueryEscape(claims.Subject) +
-			"/" + e.ExpireAt.Format("2006-01-02") +
-			"/" + base32.StdEncoding.EncodeToString(encInvToken) +
-			"/" + e.Meta
-		other["lang"] = lang(r)
-
-		e := prepareEmail(e.Email, other,
-			"template-subject-invite_", "You have been invited, confirm invitation",
-			"template-plain-invite_", "Click on this link: "+other["url"],
-			"template-html-invite_", other["lang"])
-
-		go func() {
-			err = sendEmail(opts.EmailUrl, e)
-			if err != nil {
-				log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
-			}
-		}()
-
+		emailToken = "0"
 	}
+
+	err = insertInvite(e.Email, claims.Subject, e.MetaData, timeNow())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-06, insert user failed: %v", err)
+		return
+	}
+
+	encInvToken, err := newPw(claims.Subject+e.ExpireAt.Format("2006-01-02")+serialize(e.MetaData)+claims.InviteToken, 0)
+
+	other["email"] = e.Email
+	other["url"] = opts.EmailLinkPrefix +
+		"/confirm/invite-new/" + url.QueryEscape(e.Email) +
+		"/" + emailToken +
+		"/" + url.QueryEscape(claims.Subject) +
+		"/" + e.ExpireAt.Format("2006-01-02") +
+		"/" + base32.StdEncoding.EncodeToString(encInvToken) +
+		"/" + metaBase64
+	other["lang"] = lang(r)
+
+	pe := prepareEmail(e.Email, other,
+		"template-subject-invite-new_", "You have been invited, activate your account",
+		"template-plain-invite-new_", "Click on this link: "+other["url"],
+		"template-html-invite-new_", other["lang"])
+
+	go func() {
+		err = sendEmail(opts.EmailUrl, pe)
+		if err != nil {
+			log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
+		}
+	}()
 
 	w.WriteHeader(http.StatusOK)
 }
 
 func signup(w http.ResponseWriter, r *http.Request) {
-	buf, _ := ioutil.ReadAll(r.Body)
-	rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
-	rdr2 := ioutil.NopCloser(bytes.NewBuffer(buf))
-
 	var cred Credentials
-	err := json.NewDecoder(rdr1).Decode(&cred)
+	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
@@ -343,17 +303,13 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = insertUser(cred.Email, calcPw, nil, emailToken, refreshToken, inviteToken, timeNow())
+	err = insertUser(cred.Email, calcPw, opts.MetaData, emailToken, refreshToken, inviteToken, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
 		return
 	}
 
 	other := map[string]string{}
-	err = json.NewDecoder(rdr2).Decode(&other)
-	if err != nil {
-		log.Printf("No or wrong json, ignoring [%v]", err)
-	}
 	other["token"] = emailToken
 	other["email"] = cred.Email
 	other["url"] = opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken
@@ -400,32 +356,10 @@ func parseTemplate(filename string, other map[string]string) string {
 
 func login(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
-
-	//https://medium.com/@xoen/golang-read-from-an-io-readwriter-without-loosing-its-content-2c6911805361
-	var bodyCopy []byte
-	var err error
-	if r.Body != nil {
-		bodyCopy, err = ioutil.ReadAll(r.Body)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
-			return
-		}
-	}
-
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
-	err = json.NewDecoder(r.Body).Decode(&cred)
+	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
-		r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyCopy))
-		err = r.ParseForm()
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-01, cannot parse POST data %v", err)
-			return
-		}
-		err = schema.NewDecoder().Decode(&cred, r.PostForm)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-02, cannot populate POST data %v", err)
-			return
-		}
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-login-02, cannot populate POST data %v", err)
+		return
 	}
 
 	result, errString, err := checkEmailPassword(cred.Email, cred.Password)
@@ -536,6 +470,11 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-01, query unescape email %v err: %v", vars["email"], err)
 		return
 	}
+	other := make(map[string]string)
+	err = json.NewDecoder(r.Body).Decode(&other)
+	if err != nil {
+		log.Printf("No or wrong json, ignoring [%v]", err)
+	}
 
 	forgetEmailToken, err := genToken()
 	if err != nil {
@@ -543,16 +482,10 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = updateEmailForgotToken(email, forgetEmailToken)
+	err = updateEmailForgotToken(email, forgetEmailToken, timeNow().Add(time.Second*time.Duration(opts.ExpireCode)))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-reset-email-03, update token for %v failed, token %v: %v", email, forgetEmailToken, err)
 		return
-	}
-
-	other := map[string]string{}
-	err = json.NewDecoder(r.Body).Decode(&other)
-	if err != nil {
-		log.Printf("No or wrong json, ignoring [%v]", err)
 	}
 
 	other["email"] = email
@@ -611,38 +544,7 @@ func confirmReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
 		return
 	}
-	err = updatePasswordForgot(cred.Email, cred.EmailToken, newPw)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
-		return
-	}
-
-	writeOAuth(w, cred.Email)
-}
-
-func confirmInviteNew(w http.ResponseWriter, r *http.Request) {
-	var cred Credentials
-	err := json.NewDecoder(r.Body).Decode(&cred)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
-		return
-	}
-	err = checkInvite(cred)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
-		return
-	}
-	newPw, err := newPw(cred.Password, 0)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
-		return
-	}
-	err = updatePasswordInvite(cred.Email, cred.EmailToken, newPw)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
-		return
-	}
-	err = updateConfirmInviteAt(cred.Email, cred.InviteEmail, timeNow())
+	err = updatePasswordForgot(cred.Email, cred.EmailToken, newPw, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
 		return
@@ -652,60 +554,79 @@ func confirmInviteNew(w http.ResponseWriter, r *http.Request) {
 }
 
 func confirmInvite(w http.ResponseWriter, r *http.Request) {
-	var cred Credentials
-	err := json.NewDecoder(r.Body).Decode(&cred)
+	var invite Invite
+	err := json.NewDecoder(r.Body).Decode(&invite)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-01, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
 	}
-	err = checkInvite(cred)
+	pw, err := checkInvite(invite)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-02, cannot parse JSON credentials %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
 	}
 
-	err = updateConfirmInviteAt(cred.Email, cred.InviteEmail, timeNow())
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-03, update user failed: %v", err)
+	if pw == nil && invite.Password != nil && invite.EmailToken != nil {
+		log.Printf("Password for user not found in the DB, so we set a new password for user %v", invite.Email)
+		newPw, err := newPw(*invite.Password, 0)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", invite.Email, err)
+			return
+		}
+		err = updatePasswordInvite(invite.Email, *invite.EmailToken, newPw)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
+			return
+		}
+	} else {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
 		return
 	}
+
+	err = updateConfirmInviteAt(invite.Email, invite.InviterEmail, timeNow())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
+		return
+	}
+
+	writeOAuth(w, invite.Email)
 }
 
-func checkInvite(cred Credentials) error {
-	err := validateEmail(cred.InviteEmail)
+func checkInvite(invite Invite) ([]byte, error) {
+	err := validateEmail(invite.InviterEmail)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	decoded, err := base32.StdEncoding.DecodeString(cred.InviteToken)
+	decoded, err := base32.StdEncoding.DecodeString(invite.InviteToken)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	res, err := findAuthByEmail(cred.InviteEmail)
+	res, err := findAuthByEmail(invite.InviterEmail)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	//token is contributor email, validity date, sponsor email
-	storedPw, calcPw, err := checkPw(cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken, decoded)
+	storedPw, calcPw, err := checkPw(invite.InviterEmail+invite.ExpireAt+serialize(invite.MetaData)+res.inviteToken, decoded)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if bytes.Compare(calcPw, storedPw) != 0 {
-		return fmt.Errorf("invite token is wrong: %v", cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken)
+		return nil, fmt.Errorf("invite token is wrong: %v", invite.InviterEmail+invite.ExpireAt+serialize(invite.MetaData)+res.inviteToken)
 	}
 
-	log.Printf("content: %v", cred)
+	log.Printf("content: %v", invite)
 	layout := "2006-01-02"
-	t, err := time.Parse(layout, cred.ExpireAt)
+	t, err := time.Parse(layout, invite.ExpireAt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if t.Before(timeNow()) {
-		return fmt.Errorf("Expired: %v before %v", t, timeNow())
+		return nil, fmt.Errorf("Expired: %v before %v", t, timeNow())
 	}
-	return nil
+	return res.password, nil
 }
 
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
@@ -1012,6 +933,28 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func meta(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	var meta map[string]string
+	err := json.NewDecoder(r.Body).Decode(&meta)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-01, cannot parse JSON credentials %v", err)
+		return
+	}
+
+	meta = removeUsedKeys1(meta)
+
+	//merge with stored meta
+	for k, v := range meta {
+		claims.MetaData[k] = v
+	}
+
+	err = updateMeta(claims.Subject, claims.MetaData)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-invite-01, cannot parse JSON credentials %v", err)
+		return
+	}
+}
+
 //https://tools.ietf.org/html/rfc6749#section-1.3.1
 //https://developer.okta.com/blog/2019/08/22/okta-authjs-pkce
 func authorize(w http.ResponseWriter, r *http.Request) {
@@ -1089,4 +1032,10 @@ func asUser(w http.ResponseWriter, r *http.Request, _ string) {
 	m := mux.Vars(r)
 	email := m["email"]
 	writeOAuth(w, email)
+}
+
+func deleteUser(w http.ResponseWriter, r *http.Request, _ string) {
+	m := mux.Vars(r)
+	email := m["email"]
+	deleteUserDb(email)
 }

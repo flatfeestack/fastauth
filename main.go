@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -58,39 +59,50 @@ var (
 )
 
 type Credentials struct {
-	Email    string `json:"email,omitempty" schema:"email"`
-	Password string `json:"password" schema:"password,required"`
-	TOTP     string `json:"totp,omitempty" schema:"totp"`
+	Email    string `json:"email,omitempty"`
+	Password string `json:"password,omitempty"`
+	TOTP     string `json:"totp,omitempty"`
 	//here comes oauth, leave empty on regular login
 	//If you want to use oauth, you need to configure
 	//client-id with a matching redirect-uri from the
 	//command line
-	ClientId                string `json:"client_id,omitempty" schema:"client_id"`
-	ResponseType            string `json:"response_type,omitempty" schema:"response_type"`
-	State                   string `json:"state,omitempty" schema:"state"`
-	Scope                   string `json:"scope" schema:"scope"`
-	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
-	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
-	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
-	//Token stuff
-	EmailToken  string `json:"email_token,omitempty" schema:"email_token"`
-	InviteEmail string `json:"inviteEmail,omitempty"`
-	ExpireAt    string `json:"expireAt,omitempty"`
-	InviteToken string `json:"inviteToken,omitempty"`
-	InviteMeta  string `json:"inviteMeta,omitempty"`
+	ClientId                string `json:"client_id,omitempty"`
+	ResponseType            string `json:"response_type,omitempty"`
+	State                   string `json:"state,omitempty"`
+	Scope                   string `json:"scope,omitempty"`
+	RedirectUri             string `json:"redirect_uri,omitempty"`
+	CodeChallenge           string `json:"code_challenge,omitempty"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
+	EmailToken              string `json:"email_token,omitempty"`
 }
+
+//confirmInvite
+type Invite struct {
+	Email        string            `json:"email,omitempty"`
+	Password     *string           `json:"password,omitempty"`
+	EmailToken   *string           `json:"email_token,omitempty"`
+	ExpireAt     string            `json:"expireAt,omitempty"`
+	InviteToken  string            `json:"inviteToken,omitempty"`
+	InviterEmail string            `json:"inviterEmail,omitempty"`
+	MetaData     map[string]string `json:"metaData,omitempty"`
+}
+
+var (
+	usedJsonKeys = []string{"iss", "sub", "aud", "exp", "nbf", "iat", "jti", "scope", "inviteToken", "inviteClaims", "inviteMeta"}
+)
 
 type TokenClaims struct {
-	Scope        string   `json:"scope,omitempty"`
-	InviteToken  string   `json:"inviteToken,omitempty"`
-	InviteEmails []string `json:"inviteEmails,omitempty"`
-	//TODO: add better structure
-	InviteMeta []string `json:"inviteMeta,omitempty"`
+	Scope        string            `json:"scope,omitempty"`
+	InviteToken  string            `json:"inviteToken,omitempty"`
+	InviteClaims []InviteClaims    `json:"inviteClaims,omitempty"`
+	MetaData     map[string]string `json:",omitempty"` //special flat handling
 	jwt.Claims
-	additionalClaims
 }
 
-type additionalClaims map[string]interface{}
+type InviteClaims struct {
+	InviterEmail string            `json:"inviterEmail,omitempty"`
+	MetaData     map[string]string `json:"metaData,omitempty"`
+}
 
 type RefreshClaims struct {
 	ExpiresAt int64  `json:"exp,omitempty"`
@@ -135,6 +147,7 @@ type Opts struct {
 	ExpireAccess    int
 	ExpireRefresh   int
 	ExpireCode      int
+	ExpireForgot    int
 	HS256           string
 	EdDSA           string
 	RS256           string
@@ -151,6 +164,7 @@ type Opts struct {
 	Scope           string
 	LogPath         string
 	Admins          string
+	MetaData        map[string]string
 }
 
 func NewOpts() *Opts {
@@ -187,6 +201,8 @@ func NewOpts() *Opts {
 		180*24*60*60), "Refresh token expiration in seconds, default 6month")
 	flag.IntVar(&opts.ExpireCode, "expire-code", lookupEnvInt("EXPIRE_CODE",
 		60), "Authtoken flow expiration in seconds, default 1min")
+	flag.IntVar(&opts.ExpireForgot, "expire-forgot", lookupEnvInt("EXPIRE_FORGOT",
+		60*60*7), "Forgot email flow expiration in seconds, default 7 days")
 	flag.StringVar(&opts.HS256, "hs256", lookupEnv("HS256"), "HS256 key")
 	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
@@ -202,6 +218,18 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.LogPath, "log", lookupEnv("LOG",
 		os.TempDir()+"/ffs"), "Log directory, default is /tmp/ffs")
 	flag.StringVar(&opts.Admins, "admins", lookupEnv("ADMINS"), "Admins")
+	var metaData string
+	flag.StringVar(&metaData, "meta-data", lookupEnv("META_DATA"), "Meta data used when creating a new user")
+	if len(metaData) > 0 {
+		metaDataEnc, err := base64.StdEncoding.DecodeString(metaData)
+		if err != nil {
+			log.Fatalf("Cannot read Base64 %v", err)
+		}
+		err = json.Unmarshal(metaDataEnc, &opts.MetaData)
+		if err != nil {
+			log.Fatalf("Cannot decode json %v", err)
+		}
+	}
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -426,7 +454,6 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods(http.MethodGet)
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/reset", confirmReset).Methods(http.MethodPost)
-		router.HandleFunc("/confirm/invite-new", confirmInviteNew).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/invite", confirmInvite).Methods(http.MethodPost)
 
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods(http.MethodPost)
@@ -437,10 +464,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		//invites
 		router.HandleFunc("/invite", jwtAuth(inviteOther)).Methods(http.MethodPost)
 		router.HandleFunc("/invite", jwtAuth(invitations)).Methods(http.MethodGet)
-		router.HandleFunc("/invite/{email}", jwtAuth(inviteOtherDelete)).Methods(http.MethodDelete)
-		//TODO: not yet in the frontend
-		router.HandleFunc("/invite/me/{email}", jwtAuth(inviteMyDelete)).Methods(http.MethodDelete)
-		//TODO: not yet in the frontend
+		router.HandleFunc("/invite/{inviterEmail}/{inviteeEmail}", jwtAuth(inviteDelete)).Methods(http.MethodDelete)
 		router.HandleFunc("/invite", jwtAuth(inviteResetMyToken)).Methods(http.MethodPatch)
 	}
 	//logout
@@ -468,7 +492,9 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 	}
 
+	router.HandleFunc("/meta", jwtAuth(meta)).Methods(http.MethodPatch)
 	router.HandleFunc("/admin/login-as/{email}", jwtAuthAdmin(asUser, admins)).Methods(http.MethodPost)
+	router.HandleFunc("/admin/delete/{email}", jwtAuthAdmin(deleteUser, admins)).Methods(http.MethodPost)
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[404] no route matched for: %s, %s", r.URL, r.Method)

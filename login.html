@@ -56,69 +56,6 @@
             background: linear-gradient(to left, #d0d0d0, #a0a0a0);
         }
     </style>
-    <script>
-        function changeForm(action) {
-            const reg = document.getElementById("register-form");
-            const login = document.getElementById("login-form");
-            if (action === "reg") {
-                login.style.display = "block";
-                reg.style.display = "none";
-            } else {
-                login.style.display = "none";
-                reg.style.display = "block";
-            }
-        }
-
-        function login() {
-            const queryString = window.location.search;
-            const urlParams = new URLSearchParams(queryString);
-            const clientId = urlParams.get('client_id');
-            const responseType = urlParams.get('response_type');
-            const codeChallenge = urlParams.get('code_challenge');
-            const codeChallengeMethod = urlParams.get('code_challenge_method');
-            const redirectUri = urlParams.get('redirect_uri');
-            const scope = urlParams.get('scope');
-
-            post({
-                client_id: clientId,
-                response_type: responseType,
-                scope: scope,
-                code_challenge: codeChallenge,
-                code_challenge_method: codeChallengeMethod,
-                redirect_uri: redirectUri
-            }, 'login-form');
-        }
-
-        function register() {
-            const reg = document.getElementById("register-form");
-            const data = new FormData(reg);
-            const json = JSON.stringify(Object.fromEntries(data));
-
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", "../signup");
-            xhr.setRequestHeader("Content-Type", "application/json");
-            xhr.onreadystatechange = function () {
-                if (xhr.readyState === 4 && xhr.status === 200) {
-                    changeForm('login')
-                }
-            };
-            xhr.send(json);
-        }
-
-        function post(params, id) {
-            const form = document.getElementById(id);
-            for (const key in params) {
-                if (params.hasOwnProperty(key)) {
-                    const hiddenField = document.createElement('input');
-                    hiddenField.type = 'hidden';
-                    hiddenField.name = key;
-                    hiddenField.value = params[key];
-                    form.appendChild(hiddenField);
-                }
-            }
-            form.submit();
-        }
-    </script>
 </head>
 <body>
 
@@ -126,17 +63,78 @@
     <form id="register-form">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
-        <button onclick="register()">CREATE ACCOUNT</button>
-        <p class="message">Already registered? <a href="#" onclick="changeForm('reg')">Sign In</a></p>
+        <button  onclick="submitRegister()">CREATE ACCOUNT</button>
+        <p class="message">Already registered? <a href="#" onclick="changeForm('register')">Sign In</a></p>
     </form>
 
-    <form id="login-form" method="post" action="../login">
+    <form id="login-form">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
-        <button onclick="login()">LOGIN</button>
+        <button>LOGIN</button>
         <p class="message">Not registered? <a href="#" onclick="changeForm('login')">Create an account</a></p>
     </form>
 </div>
+
+<script>
+    const login = document.getElementById('login-form');
+    const register = document.getElementById("register-form");
+    login.onsubmit = submitLogin;
+
+    function changeForm(action) {
+        if (action === "register") {
+            login.style.display = "block";
+            register.style.display = "none";
+        } else {
+            login.style.display = "none";
+            register.style.display = "block";
+        }
+    }
+
+    function submitLogin(event) {
+        event.preventDefault();
+        console.log("holla")
+        const queryString = window.location.search;
+        const urlParams = new URLSearchParams(queryString);
+
+        const data = new FormData(login);
+        const entries = urlParams.entries();
+        const json = JSON.stringify(Object.assign(Object.fromEntries(data),Object.fromEntries(entries)));
+
+        console.log(login)
+        console.log(entries)
+        console.log(json)
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "../login");
+        xhr.setRequestHeader("Content-Type", "application/json");
+        /*xhr.onloadend = function () {
+            if (xhr.status == 200) {
+                //https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/responseURL
+                window.location = xhr.responseURL;
+            } else {
+                console.log(xhr.status)
+            }
+        };*/
+        xhr.send(json);
+    }
+
+    function submitRegister() {
+        const data = new FormData(register);
+        const json = JSON.stringify(Object.fromEntries(data));
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "../signup");
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.onloadend = function () {
+            if (xhr.status === 200) {
+                changeForm('login')
+            } else {
+                console.log(xhr.status)
+            }
+        };
+        xhr.send(json);
+    }
+</script>
 
 </body>
 </html>

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
@@ -53,20 +52,24 @@ func jwtAuth0(r *http.Request) (*TokenClaims, error) {
 		return nil, fmt.Errorf("ERR-02, could not split token: %v", authHeader)
 	}
 	bearerToken := split[1]
+	return jwtAuth1(bearerToken)
+}
 
+func jwtAuth1(bearerToken string) (*TokenClaims, error) {
 	tok, err := jwt.ParseSigned(bearerToken)
 	if err != nil {
 		return nil, fmt.Errorf("ERR-03, could not parse token: %v", bearerToken[1])
 	}
 
-	claims := &TokenClaims{additionalClaims: make(map[string]interface{})}
+	claims := &TokenClaims{}
+	var meta map[string]interface{}
 
 	if tok.Headers[0].Algorithm == string(jose.RS256) {
-		err = tok.Claims(privRSA.Public(), claims)
+		err = tok.Claims(privRSA.Public(), claims, &meta)
 	} else if tok.Headers[0].Algorithm == string(jose.HS256) {
-		err = tok.Claims(jwtKey, claims)
+		err = tok.Claims(jwtKey, claims, &meta)
 	} else if tok.Headers[0].Algorithm == string(jose.EdDSA) {
-		err = tok.Claims(privEdDSA.Public(), claims)
+		err = tok.Claims(privEdDSA.Public(), claims, &meta)
 	} else {
 		return nil, fmt.Errorf("ERR-04, unknown algorithm: %v", tok.Headers[0].Algorithm)
 	}
@@ -75,6 +78,9 @@ func jwtAuth0(r *http.Request) (*TokenClaims, error) {
 		return nil, fmt.Errorf("ERR-05, could not parse claims: %v", bearerToken)
 	}
 
+	metaStr := removeUsedKeys2(meta)
+	claims.MetaData = metaStr
+
 	if claims.Expiry != nil && !claims.Expiry.Time().After(timeNow()) {
 		return claims, fmt.Errorf("ERR-06, unauthorized: %v", bearerToken)
 	}
@@ -82,6 +88,7 @@ func jwtAuth0(r *http.Request) (*TokenClaims, error) {
 	if claims.Subject == "" {
 		return nil, fmt.Errorf("ERR-07, no subject: %v", claims)
 	}
+
 	return claims, nil
 }
 
@@ -116,12 +123,11 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 	return refreshClaims, nil
 }
 
-func encodeAccessToken(additionalClaims map[string]interface{}, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string, inviteMeta []string) (string, error) {
+func encodeAccessToken(additionalKeys map[string]string, subject string, scope string, audience string, issuer string, inviteToken string, inviteClaims []InviteClaims) (string, error) {
 	tokenClaims := &TokenClaims{
 		Scope:        scope,
 		InviteToken:  inviteToken,
-		InviteEmails: inviteEmails,
-		InviteMeta:   inviteMeta,
+		InviteClaims: inviteClaims,
 		Claims: jwt.Claims{
 			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
 			Subject:  subject,
@@ -130,8 +136,6 @@ func encodeAccessToken(additionalClaims map[string]interface{}, subject string, 
 			IssuedAt: jwt.NewNumericDate(timeNow()),
 		},
 	}
-
-	tokenClaims.additionalClaims = additionalClaims
 
 	var sig jose.Signer
 	var err error
@@ -148,7 +152,9 @@ func encodeAccessToken(additionalClaims map[string]interface{}, subject string, 
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
-	accessTokenString, err := jwt.Signed(sig).Claims(tokenClaims).CompactSerialize()
+	b := jwt.Signed(sig).Claims(tokenClaims)
+	b = b.Claims(mapToInterface(additionalKeys))
+	accessTokenString, err := b.CompactSerialize()
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
@@ -231,26 +237,17 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	var inviteEmails []string
-	if result.inviteEmails != nil {
-		s := *result.inviteEmails
-		inviteEmails = strings.Split(s, ",")
-	}
-	var inviteMeta []string
-	if result.inviteMeta != nil {
-		s := *result.inviteMeta
-		inviteMeta = strings.Split(s, ",")
-	}
 
-	jsonMap := make(map[string]interface{})
-	if result.meta != nil {
-		err := json.Unmarshal([]byte(*result.meta), &jsonMap)
-		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
+	l := len(result.invites)
+	inviteClaims := make([]InviteClaims, l)
+	for k, v := range result.invites {
+		inviteClaims[k] = InviteClaims{
+			InviterEmail: v.email,
+			MetaData:     v.meta,
 		}
 	}
 
-	encodedAccessToken, err := encodeAccessToken(jsonMap, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails, inviteMeta)
+	encodedAccessToken, err := encodeAccessToken(result.meta, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteClaims)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}

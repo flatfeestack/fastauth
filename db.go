@@ -395,12 +395,12 @@ func setupDB() {
 		//add user for development
 		users := strings.Split(opts.Users, ":")
 		for _, user := range users {
-			userPwMeta := strings.Split(user, ";")
+			userPwMeta := strings.Split(user, "=")
 			var err error
 			if len(userPwMeta) == 2 {
 				err = addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], nil)
 				if err != nil {
-					log.Printf("could not instert user %v, %v", userPwMeta[0], err)
+					log.Printf("could not insert user %v, %v", userPwMeta[0], err)
 				}
 			} else if len(userPwMeta) > 2 {
 				jsonStr, err := base64.StdEncoding.DecodeString(userPwMeta[2])
@@ -424,7 +424,7 @@ func setupDB() {
 			}
 
 			if err == nil {
-				log.Printf("insterted user %v", userPwMeta[0])
+				log.Printf("inserted user %v", userPwMeta[0])
 			} else {
 				log.Printf("could not insert %v: %v", userPwMeta[0], err)
 			}

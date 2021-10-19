@@ -207,7 +207,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", lookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
-	flag.StringVar(&opts.Users, "users", lookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
+	flag.StringVar(&opts.Users, "users", lookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch=pw123:test@test.ch=123pw")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", lookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", lookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.LdapServer, "ldap-server", lookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
@@ -478,6 +478,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 	if opts.Dev != "" {
 		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods(http.MethodPost)
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods(http.MethodPost)
+		router.HandleFunc("/", authorize).Methods(http.MethodGet)
 	}
 
 	if opts.Dev != "" || opts.Env == "dev" {

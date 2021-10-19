@@ -32,8 +32,9 @@ type EmailRequest struct {
 
 //confirmEmailPost
 type EmailToken struct {
-	Email string `json:"email"`
-	Token string `json:"token"`
+	Email       string `json:"email"`
+	EmailToken  string `json:"emailToken"`
+	RedirectUri string `json:"redirect_uri,omitempty"`
 }
 
 //inviteOther
@@ -103,14 +104,29 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = updateEmailToken(et.Email, et.Token)
+	err = updateEmailToken(et.Email, et.EmailToken)
 	if err != nil {
 		//the token can be only updated once. Otherwise, anyone with the link can always login. Thus, if the email
 		//leaks, the account is compromised. Thus, disallow this.
-		writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
+		writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.EmailToken, err)
 		return
 	}
-	writeOAuth(w, et.Email)
+
+	codeCodeChallengeMethod := r.URL.Query().Get("code_challenge_method")
+	codeCodeChallenge := r.URL.Query().Get("code_challenge")
+
+	if codeCodeChallengeMethod != "" && codeCodeChallenge != "" {
+		//return the code flow
+		encoded, _, err := encodeCodeToken(et.Email, codeCodeChallenge, codeCodeChallengeMethod)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", et.Email, err)
+			return
+		}
+		w.Header().Set("Location", et.RedirectUri+"?code="+encoded)
+		w.WriteHeader(303)
+	} else {
+		writeOAuth(w, et.Email)
+	}
 }
 
 //don't forget to refresh the token, this updates the token content
@@ -327,7 +343,20 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	w.WriteHeader(http.StatusOK)
+	if cred.RedirectUri != "" {
+		redirUrl := cred.RedirectUri
+		if opts.Dev != "" {
+			if strings.Index(redirUrl, "?") >= 0 {
+				redirUrl = redirUrl + "&emailToken=" + emailToken
+			} else {
+				redirUrl = redirUrl + "?emailToken=" + emailToken
+			}
+		}
+		w.Header().Set("Location", redirUrl)
+		w.WriteHeader(303)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 func lang(r *http.Request) string {

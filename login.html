@@ -47,7 +47,7 @@
             color: #4CAF50;
         }
 
-        .form #register-form {
+        .form #register-form, #confirm-email, #confirm-sms{
             display: none;
         }
 
@@ -56,84 +56,153 @@
             background: linear-gradient(to left, #d0d0d0, #a0a0a0);
         }
     </style>
+    <script>
+        function changeForm(action) {
+            if (action === "loginForm") {
+                loginForm.style.display = "block";
+                registerForm.style.display = "none";
+                confirmEmailForm.style.display = "none";
+                confirmSmsForm.style.display = "none";
+            } else if (action === "registerForm") {
+                loginForm.style.display = "none";
+                registerForm.style.display = "block";
+                confirmEmailForm.style.display = "none";
+                confirmSmsForm.style.display = "none";
+            } else if (action === "confirmEmail") {
+                loginForm.style.display = "none";
+                registerForm.style.display = "none";
+                confirmEmailForm.style.display = "block";
+                confirmSmsForm.style.display = "none";
+            }  else if (action === "confirmSms") {
+                loginForm.style.display = "none";
+                registerForm.style.display = "none";
+                confirmEmailForm.style.display = "none";
+                confirmSmsForm.style.display = "block";
+            } else {
+                throw Error("unknown action: "+ action);
+            }
+        }
+
+        function submitLoginForm(event) {
+            event.preventDefault();
+
+            const queryString = window.location.search;
+            const urlParams = new URLSearchParams(queryString);
+            const data = new FormData(loginForm);
+            const entries = urlParams.entries();
+            const json = JSON.stringify(Object.assign(Object.fromEntries(data),Object.fromEntries(entries)));
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "../login");
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.send(json);
+        }
+
+        function submitRegisterForm(event) {
+            event.preventDefault();
+
+            const queryString = window.location.search;
+            const urlParams = new URLSearchParams(queryString);
+            const data = new FormData(registerForm);
+            const entries = urlParams.entries();
+            const json = JSON.stringify(Object.assign(Object.fromEntries(data),Object.fromEntries(entries)));
+
+            const jsonStr = JSON.parse(json);
+            urlParams.set('view', 'confirmEmail');
+            urlParams.set('email', jsonStr['email']);
+            if(urlParams.get('redirect_uri')) {
+                urlParams.set('orig_redirect_uri', urlParams.get('redirect_uri'));
+            }
+            jsonStr['redirect_uri']='oauth/authorize?' + urlParams.toString();
+            console.log(jsonStr['redirect_uri']);
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "../signup");
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.onloadend = function () {
+                if (xhr.status === 200) {
+                    window.location = xhr.responseURL;
+                } else {
+                    console.log(xhr.status)
+                }
+            };
+            xhr.send(JSON.stringify(jsonStr));
+        }
+
+        function submitConfirmEmailForm(event) {
+            event.preventDefault();
+
+            const queryString = window.location.search;
+            const urlParams = new URLSearchParams(queryString);
+            const data = new FormData(registerForm);
+            const entries = urlParams.entries();
+            const json = JSON.stringify(Object.assign(Object.fromEntries(data),Object.fromEntries(entries)));
+            const jsonStr = JSON.parse(json);
+
+            const urlParams2 = new URLSearchParams();
+            urlParams2.set('email', jsonStr['email']);
+
+            jsonStr['redirect_uri']=urlParams.get('orig_redirect_uri') + urlParams2.toString();
+
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "../confirm/signup");
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.onloadend = function () {
+                if (xhr.status === 200) {
+                    window.location = xhr.responseURL;
+                } else {
+                    console.log(xhr.status)
+                }
+            };
+            xhr.send(JSON.stringify(jsonStr));
+        }
+
+    </script>
 </head>
 <body>
 
 <div class="form">
-    <form id="register-form">
+    <form id="registerForm">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
-        <button  onclick="submitRegister()">CREATE ACCOUNT</button>
-        <p class="message">Already registered? <a href="#" onclick="changeForm('register')">Sign In</a></p>
+        <button>CREATE ACCOUNT</button>
+        <p class="message">Already registered? <a href="#" onclick="changeForm('loginForm')">Sign In</a></p>
     </form>
 
-    <form id="login-form">
+    <form id="loginForm">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
         <button>LOGIN</button>
-        <p class="message">Not registered? <a href="#" onclick="changeForm('login')">Create an account</a></p>
+        <p class="message">Not registered? <a href="#" onclick="changeForm('registerForm')">Create an account</a></p>
+    </form>
+
+    <form id="confirmEmailForm">
+        <input id="confirmEmail" name="email" type="hidden" placeholder="email address"/>
+        <input id="emailToken" name="emailToken" type="text" placeholder="confirm email code"/>
+        <button>CONFIRM EMAIL</button>
+    </form>
+
+    <form id="confirmSmsForm">
+        <input name="smsCode" type="text" placeholder="confirm sms/totp code"/>
+        <button>CONFIRM SMS / TOTP</button>
     </form>
 </div>
 
 <script>
-    const login = document.getElementById('login-form');
-    const register = document.getElementById("register-form");
-    login.onsubmit = submitLogin;
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById("registerForm");
+    const confirmEmailForm = document.getElementById("confirmEmailForm");
+    const emailToken = document.getElementById("emailToken");
+    const confirmEmail = document.getElementById("confirmEmail");
+    const confirmSmsForm = document.getElementById("confirmSmsForm");
+    loginForm.onsubmit = submitLoginForm;
+    registerForm.onsubmit = submitRegisterForm;
+    confirmEmailForm.onsubmit = submitConfirmEmailForm;
 
-    function changeForm(action) {
-        if (action === "register") {
-            login.style.display = "block";
-            register.style.display = "none";
-        } else {
-            login.style.display = "none";
-            register.style.display = "block";
-        }
-    }
+    const queryString = window.location.search;
+    const urlParams = new URLSearchParams(queryString);
+    const view = urlParams.get("view");
 
-    function submitLogin(event) {
-        event.preventDefault();
-        console.log("holla")
-        const queryString = window.location.search;
-        const urlParams = new URLSearchParams(queryString);
-
-        const data = new FormData(login);
-        const entries = urlParams.entries();
-        const json = JSON.stringify(Object.assign(Object.fromEntries(data),Object.fromEntries(entries)));
-
-        console.log(login)
-        console.log(entries)
-        console.log(json)
-
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "../login");
-        xhr.setRequestHeader("Content-Type", "application/json");
-        /*xhr.onloadend = function () {
-            if (xhr.status == 200) {
-                //https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/responseURL
-                window.location = xhr.responseURL;
-            } else {
-                console.log(xhr.status)
-            }
-        };*/
-        xhr.send(json);
-    }
-
-    function submitRegister() {
-        const data = new FormData(register);
-        const json = JSON.stringify(Object.fromEntries(data));
-
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "../signup");
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.onloadend = function () {
-            if (xhr.status === 200) {
-                changeForm('login')
-            } else {
-                console.log(xhr.status)
-            }
-        };
-        xhr.send(json);
-    }
+    emailToken.value = urlParams.get("emailToken") ? urlParams.get("emailToken") : '';
+    changeForm(urlParams.get("view") ? urlParams.get("view") : "loginForm");
 </script>
 
 </body>

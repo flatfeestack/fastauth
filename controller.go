@@ -32,8 +32,8 @@ type EmailRequest struct {
 }
 
 type EmailToken struct {
-	Email string `json:"email"`
-	Token string `json:"token"`
+	Email      string `json:"email"`
+	EmailToken string `json:"emailToken"`
 }
 
 type EmailInvite struct {
@@ -102,11 +102,11 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = updateEmailToken(et.Email, et.Token)
+	err = updateEmailToken(et.Email, et.EmailToken)
 	if err != nil {
 		//the token can be only updated once. Otherwise, anyone with the link can always login. Thus, if the email
 		//leaks, the account is compromised. Thus, disallow this.
-		writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.Token, err)
+		writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.EmailToken, err)
 		return
 	}
 	writeOAuth(w, et.Email)

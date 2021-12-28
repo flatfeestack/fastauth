@@ -51,6 +51,10 @@
             display: none;
         }
 
+        #registrationLink {
+            display: none;
+        }
+
         body {
             background: #b0b0b0; /* fallback for old browsers */
             background: linear-gradient(to left, #d0d0d0, #a0a0a0);
@@ -60,7 +64,7 @@
         function changeForm(action) {
             const reg = document.getElementById("register-form");
             const login = document.getElementById("login-form");
-            if (action === "reg") {
+            if (action === "login") {
                 login.style.display = "block";
                 reg.style.display = "none";
             } else {
@@ -70,23 +74,18 @@
         }
 
         function login() {
-            const queryString = window.location.search;
-            const urlParams = new URLSearchParams(queryString);
-            const clientId = urlParams.get('client_id');
-            const responseType = urlParams.get('response_type');
-            const codeChallenge = urlParams.get('code_challenge');
-            const codeChallengeMethod = urlParams.get('code_challenge_method');
-            const redirectUri = urlParams.get('redirect_uri');
-            const scope = urlParams.get('scope');
+            const urlParams = new URLSearchParams(window.location.search);
+            const login = document.getElementById("login-form");
+            const data = new FormData(login);
+            const params1 = Object.fromEntries(data);
+            const params2 = Object.fromEntries(urlParams);
+            const merged = {...params1, ...params2};
 
-            post({
-                client_id: clientId,
-                response_type: responseType,
-                scope: scope,
-                code_challenge: codeChallenge,
-                code_challenge_method: codeChallengeMethod,
-                redirect_uri: redirectUri
-            }, 'login-form');
+
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "login");
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.send(JSON.stringify(merged));
         }
 
         function register() {
@@ -95,28 +94,20 @@
             const json = JSON.stringify(Object.fromEntries(data));
 
             const xhr = new XMLHttpRequest();
-            xhr.open("POST", "../signup");
+            xhr.open("POST", "signup");
             xhr.setRequestHeader("Content-Type", "application/json");
             xhr.onreadystatechange = function () {
                 if (xhr.readyState === 4 && xhr.status === 200) {
+                    if(xhr.response.length > 0) {
+                        const obj = JSON.parse(xhr.response);
+                        const registrationLink = document.getElementById("registrationLink");
+                        registrationLink.children[0].setAttribute("href", obj.url);
+                        registrationLink.style.display = "block";
+                    }
                     changeForm('login')
                 }
             };
             xhr.send(json);
-        }
-
-        function post(params, id) {
-            const form = document.getElementById(id);
-            for (const key in params) {
-                if (params.hasOwnProperty(key)) {
-                    const hiddenField = document.createElement('input');
-                    hiddenField.type = 'hidden';
-                    hiddenField.name = key;
-                    hiddenField.value = params[key];
-                    form.appendChild(hiddenField);
-                }
-            }
-            form.submit();
         }
     </script>
 </head>
@@ -127,15 +118,16 @@
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
         <button onclick="register()">CREATE ACCOUNT</button>
-        <p class="message">Already registered? <a href="#" onclick="changeForm('reg')">Sign In</a></p>
+        <p class="message">Already registered? <a href="#" onclick="changeForm('login')">Sign In</a></p>
     </form>
 
-    <form id="login-form" method="post" action="../login">
+    <form id="login-form">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
         <button onclick="login()">LOGIN</button>
-        <p class="message">Not registered? <a href="#" onclick="changeForm('login')">Create an account</a></p>
+        <p class="message">Not registered? <a href="#" onclick="changeForm('register')">Create an account</a></p>
     </form>
+    <p id="registrationLink"><a href="#">Registration Link</a></p>
 </div>
 
 </body>

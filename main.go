@@ -81,16 +81,12 @@ type Credentials struct {
 }
 
 type TokenClaims struct {
-	Scope        string   `json:"scope,omitempty"`
-	InviteToken  string   `json:"inviteToken,omitempty"`
-	InviteEmails []string `json:"inviteEmails,omitempty"`
-	//TODO: add better structure
-	InviteMeta []string `json:"inviteMeta,omitempty"`
+	Scope            string                 `json:"scope,omitempty"`
+	InviteToken      string                 `json:"inviteToken,omitempty"`
+	InviteMetaSystem map[string]interface{} `json:"inviteMetaSystem,omitempty"`
+	InviteMetaUser   map[string]interface{} `json:"inviteMetaUser,omitempty"`
 	jwt.Claims
-	additionalClaims
 }
-
-type additionalClaims map[string]interface{}
 
 type RefreshClaims struct {
 	ExpiresAt int64  `json:"exp,omitempty"`
@@ -426,22 +422,10 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods(http.MethodGet)
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/reset", confirmReset).Methods(http.MethodPost)
-		router.HandleFunc("/confirm/invite-new", confirmInviteNew).Methods(http.MethodPost)
-		router.HandleFunc("/confirm/invite", confirmInvite).Methods(http.MethodPost)
-
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods(http.MethodPost)
 		router.HandleFunc("/setup/sms/{sms}", jwtAuth(setupSMS)).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/sms/{token}", jwtAuth(confirmSMS)).Methods(http.MethodPost)
-
-		//invites
-		router.HandleFunc("/invite", jwtAuth(inviteOther)).Methods(http.MethodPost)
-		router.HandleFunc("/invite", jwtAuth(invitations)).Methods(http.MethodGet)
-		router.HandleFunc("/invite/{email}", jwtAuth(inviteOtherDelete)).Methods(http.MethodDelete)
-		//TODO: not yet in the frontend
-		router.HandleFunc("/invite/me/{email}", jwtAuth(inviteMyDelete)).Methods(http.MethodDelete)
-		//TODO: not yet in the frontend
-		router.HandleFunc("/invite", jwtAuth(inviteResetMyToken)).Methods(http.MethodPatch)
 	}
 	//logout
 	router.HandleFunc("/authen/logout", jwtAuth(logout)).Methods(http.MethodGet)
@@ -451,12 +435,12 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 	router.HandleFunc("/liveness", liveness).Methods(http.MethodGet)
 
 	//display for debug and testing
-	if opts.Dev != "" {
+	if opts.Env == "dev" || opts.Env == "local" {
 		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods(http.MethodPost)
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods(http.MethodPost)
 	}
 
-	if opts.Dev != "" || opts.Env == "dev" {
+	if opts.Env == "dev" || opts.Env == "local" {
 		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods(http.MethodPost)
 	}
 
@@ -465,6 +449,10 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/authorize", authorize).Methods(http.MethodGet)
+		//convenience function
+		if opts.Env == "dev" || opts.Env == "local" {
+			router.HandleFunc("/", authorize).Methods(http.MethodGet)
+		}
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 	}
 

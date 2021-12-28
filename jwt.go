@@ -59,7 +59,7 @@ func jwtAuth0(r *http.Request) (*TokenClaims, error) {
 		return nil, fmt.Errorf("ERR-03, could not parse token: %v", bearerToken[1])
 	}
 
-	claims := &TokenClaims{additionalClaims: make(map[string]interface{})}
+	claims := &TokenClaims{}
 
 	if tok.Headers[0].Algorithm == string(jose.RS256) {
 		err = tok.Claims(privRSA.Public(), claims)
@@ -116,12 +116,13 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 	return refreshClaims, nil
 }
 
-func encodeAccessToken(additionalClaims map[string]interface{}, subject string, scope string, audience string, issuer string, inviteToken string, inviteEmails []string, inviteMeta []string) (string, error) {
+func encodeAccessToken(subject string, scope string, audience string,
+	issuer string, inviteTokenSystem map[string]interface{},
+	inviteTokenUser map[string]interface{}) (string, error) {
 	tokenClaims := &TokenClaims{
-		Scope:        scope,
-		InviteToken:  inviteToken,
-		InviteEmails: inviteEmails,
-		InviteMeta:   inviteMeta,
+		Scope:            scope,
+		InviteMetaSystem: inviteTokenSystem,
+		InviteMetaUser:   inviteTokenUser,
 		Claims: jwt.Claims{
 			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
 			Subject:  subject,
@@ -130,8 +131,6 @@ func encodeAccessToken(additionalClaims map[string]interface{}, subject string, 
 			IssuedAt: jwt.NewNumericDate(timeNow()),
 		},
 	}
-
-	tokenClaims.additionalClaims = additionalClaims
 
 	var sig jose.Signer
 	var err error
@@ -231,26 +230,16 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 }
 
 func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	var inviteEmails []string
-	if result.inviteEmails != nil {
-		s := *result.inviteEmails
-		inviteEmails = strings.Split(s, ",")
+	jsonMapSystem, err := toJsonMap(result.metaSystem)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("cannot encode system meta in encodeTokens for %v, %v", email, err)
 	}
-	var inviteMeta []string
-	if result.inviteMeta != nil {
-		s := *result.inviteMeta
-		inviteMeta = strings.Split(s, ",")
+	jsonMapUser, err := toJsonMap(result.metaUser)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("cannot encode user meta in encodeTokens for %v, %v", email, err)
 	}
 
-	jsonMap := make(map[string]interface{})
-	if result.meta != nil {
-		err := json.Unmarshal([]byte(*result.meta), &jsonMap)
-		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
-		}
-	}
-
-	encodedAccessToken, err := encodeAccessToken(jsonMap, email, opts.Scope, opts.Audience, opts.Issuer, result.inviteToken, inviteEmails, inviteMeta)
+	encodedAccessToken, err := encodeAccessToken(email, opts.Scope, opts.Audience, opts.Issuer, jsonMapSystem, jsonMapUser)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}
@@ -330,4 +319,15 @@ func encodeRefreshToken(subject string, token string) (string, int64, error) {
 		log.Printf("Refresh token: [%s]", refreshToken)
 	}
 	return refreshToken, rc.ExpiresAt, nil
+}
+
+func toJsonMap(jsonStr *string) (map[string]interface{}, error) {
+	jsonMap := make(map[string]interface{})
+	if jsonStr != nil {
+		err := json.Unmarshal([]byte(*jsonStr), &jsonMap)
+		if err != nil {
+			return nil, fmt.Errorf("ERR-refresh-06, cannot create json map %v", err)
+		}
+	}
+	return jsonMap, nil
 }

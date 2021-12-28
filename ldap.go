@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	ldap_client "github.com/go-ldap/ldap/v3"
-	"github.com/lor00x/goldap/message"
 	ldap "github.com/vjeantet/ldapserver"
 	"log"
 	"strings"
@@ -82,7 +81,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	dbRes, err := findAuthByEmail(cn)
+	_, err := findAuthByEmail(cn)
 	if err != nil {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
 		w.Write(res)
@@ -90,7 +89,6 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	e := ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
-	e.AddAttribute("cn", message.AttributeValue(*dbRes.meta))
 	w.Write(e)
 
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)

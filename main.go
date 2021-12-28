@@ -58,31 +58,26 @@ var (
 )
 
 type Credentials struct {
-	Email    string `json:"email,omitempty" schema:"email"`
-	Password string `json:"password" schema:"password,required"`
-	TOTP     string `json:"totp,omitempty" schema:"totp"`
+	Email    string `json:"email,omitempty"`
+	Password string `json:"password"`
+	TOTP     string `json:"totp,omitempty"`
 	//here comes oauth, leave empty on regular login
 	//If you want to use oauth, you need to configure
 	//client-id with a matching redirect-uri from the
 	//command line
-	ClientId                string `json:"client_id,omitempty" schema:"client_id"`
-	ResponseType            string `json:"response_type,omitempty" schema:"response_type"`
-	State                   string `json:"state,omitempty" schema:"state"`
-	Scope                   string `json:"scope" schema:"scope"`
-	RedirectUri             string `json:"redirect_uri,omitempty" schema:"redirect_uri"`
-	CodeChallenge           string `json:"code_challenge,omitempty" schema:"code_challenge"`
-	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty" schema:"code_challenge_method"`
+	ClientId                string `json:"client_id,omitempty"`
+	ResponseType            string `json:"response_type,omitempty"`
+	State                   string `json:"state,omitempty"`
+	Scope                   string `json:"scope"`
+	RedirectUri             string `json:"redirect_uri,omitempty"`
+	CodeChallenge           string `json:"code_challenge,omitempty"`
+	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
 	//Token stuff
-	EmailToken  string `json:"email_token,omitempty" schema:"email_token"`
-	InviteEmail string `json:"inviteEmail,omitempty"`
-	ExpireAt    string `json:"expireAt,omitempty"`
-	InviteToken string `json:"inviteToken,omitempty"`
-	InviteMeta  string `json:"inviteMeta,omitempty"`
+	EmailToken string `json:"email_token,omitempty"`
 }
 
 type TokenClaims struct {
 	Scope            string                 `json:"scope,omitempty"`
-	InviteToken      string                 `json:"inviteToken,omitempty"`
 	InviteMetaSystem map[string]interface{} `json:"inviteMetaSystem,omitempty"`
 	InviteMetaUser   map[string]interface{} `json:"inviteMetaUser,omitempty"`
 	jwt.Claims
@@ -418,9 +413,11 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/login", login).Methods(http.MethodPost)
 		router.HandleFunc("/refresh", refresh).Methods(http.MethodPost)
 		router.HandleFunc("/signup", signup).Methods(http.MethodPost)
+		router.HandleFunc("/invite/{email}", invite).Methods(http.MethodPost)
 		router.HandleFunc("/reset/{email}", resetEmail).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods(http.MethodGet)
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods(http.MethodPost)
+		router.HandleFunc("/confirm/invite", confirmInvite).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/reset", confirmReset).Methods(http.MethodPost)
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods(http.MethodPost)

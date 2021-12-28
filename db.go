@@ -17,8 +17,6 @@ type dbRes struct {
 	password     []byte
 	refreshToken string
 	emailToken   *string
-	inviteToken  string
-	inviteText   *string
 	sms          *string
 	smsVerified  *time.Time
 	totp         *string
@@ -31,12 +29,12 @@ type dbRes struct {
 func findAuthByEmail(email string) (*dbRes, error) {
 	var res dbRes
 	var pw string
-	query := `SELECT sms, password, meta_system, meta_user, refresh_token, email_token, 
-                     invite_token, invite_text, totp, sms_verified, totp_verified, 
-                     error_count FROM auth WHERE email = $1`
+	query := `SELECT sms, password, meta_system, meta_user, refresh_token, 
+       				 email_token, totp, sms_verified, totp_verified, error_count 
+              FROM auth WHERE email = $1`
 	err := db.QueryRow(query, email).Scan(
-		&res.sms, &pw, &res.metaSystem, &res.metaUser, &res.refreshToken, &res.emailToken, &res.inviteToken,
-		&res.inviteText, &res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
+		&res.sms, &pw, &res.metaSystem, &res.metaUser, &res.refreshToken, &res.emailToken,
+		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
 
 	if err != nil {
 		return nil, err
@@ -48,18 +46,19 @@ func findAuthByEmail(email string) (*dbRes, error) {
 	return &res, nil
 }
 
-func insertUser(email string, pwRaw []byte, emailToken string,
-	refreshToken string, inviteToken string, now time.Time) error {
-	pw := base32.StdEncoding.EncodeToString(pwRaw)
-	stmt, err := db.Prepare(`	INSERT INTO auth (
-									email, password, email_token, refresh_token, invite_token, created_at) 
-									VALUES ($1, $2, $3, $4, $5, $6)`)
+func insertUser(email string, pwRaw []byte, emailToken string, refreshToken string, now time.Time) error {
+	var pw string
+	if pwRaw != nil {
+		pw = base32.StdEncoding.EncodeToString(pwRaw)
+	}
+	stmt, err := db.Prepare(`INSERT INTO auth (email, password, email_token, refresh_token, created_at) 
+								   VALUES ($1, $2, $3, $4, $5)`)
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email, pw, emailToken, refreshToken, inviteToken, now)
+	res, err := stmt.Exec(email, pw, emailToken, refreshToken, now)
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
@@ -76,7 +75,8 @@ func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken st
 
 func updatePasswordInvite(email string, emailToken string, newPw []byte) error {
 	pw := base32.StdEncoding.EncodeToString(newPw)
-	stmt, err := db.Prepare("UPDATE auth SET password = $1, email_token = NULL WHERE email = $2 AND email_token = $3")
+	stmt, err := db.Prepare(`UPDATE auth SET password = $1, email_token = NULL 
+								   WHERE email = $2 AND email_token = $3 AND password = NULL`)
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
@@ -88,7 +88,8 @@ func updatePasswordInvite(email string, emailToken string, newPw []byte) error {
 
 func updatePasswordForgot(email string, forgetEmailToken string, newPw []byte) error {
 	pw := base32.StdEncoding.EncodeToString(newPw)
-	stmt, err := db.Prepare("UPDATE auth SET password = $1, totp = NULL, sms = NULL, forget_email_token = NULL WHERE email = $2 AND forget_email_token = $3")
+	stmt, err := db.Prepare(`UPDATE auth SET password = $1, totp = NULL, sms = NULL, forget_email_token = NULL 
+								   WHERE email = $2 AND forget_email_token = $3`)
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}
@@ -207,7 +208,7 @@ func addInitialUserWithMeta(username string, password string, metaSystem *string
 		if err != nil {
 			return err
 		}
-		err = insertUser(username, dk, "emailToken", "refreshToken", "inviteToken", timeNow())
+		err = insertUser(username, dk, "emailToken", "refreshToken", timeNow())
 		if err != nil {
 			return err
 		}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/sha256"
-	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -21,7 +20,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type EmailRequest struct {
@@ -34,14 +32,6 @@ type EmailRequest struct {
 type EmailToken struct {
 	Email      string `json:"email"`
 	EmailToken string `json:"emailToken"`
-}
-
-type EmailInvite struct {
-	Email       string    `json:"email"`
-	InviteEmail string    `json:"inviteEmail"`
-	ExpireAt    time.Time `json:"expireAt"`
-	Name        string    `json:"name"`
-	Meta        string    `json:"meta"`
 }
 
 type scryptParam struct {
@@ -112,13 +102,84 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 	writeOAuth(w, et.Email)
 }
 
-func signup(w http.ResponseWriter, r *http.Request) {
-	buf, _ := ioutil.ReadAll(r.Body)
-	rdr1 := ioutil.NopCloser(bytes.NewBuffer(buf))
-	rdr2 := ioutil.NopCloser(bytes.NewBuffer(buf))
+func invite(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	email := vars["email"]
 
+	err := validateEmail(email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "email in invite is wrong %v", err)
+		return
+	}
+
+	emailToken, err := genToken()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "cannot generate rnd token for %v, err %v", email, err)
+		return
+	}
+
+	refreshToken, err := genToken()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "cannot generate rnd refresh token for %v, err %v", email, err)
+		return
+	}
+
+	err = insertUser(email, nil, emailToken, refreshToken, timeNow())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
+		return
+	}
+
+	other := map[string]string{}
+	other["token"] = emailToken
+	other["email"] = email
+	other["url"] = opts.EmailLinkPrefix + "/confirm/invite/" + url.QueryEscape(email) + "/" + emailToken
+	other["lang"] = lang(r)
+
+	e := prepareEmail(email, other,
+		"template-subject-invite_", "Validate your email",
+		"template-plain-invite_", "Click on this link: "+other["url"],
+		"template-html-invite_", other["lang"])
+
+	go func() {
+		err = sendEmail(opts.EmailUrl, e)
+		if err != nil {
+			log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
+		}
+	}()
+
+	if opts.Env == "dev" || opts.Env == "local" {
+		w.Write([]byte(`{"url":"` + other["url"] + `"}`))
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func confirmInvite(w http.ResponseWriter, r *http.Request) {
 	var cred Credentials
-	err := json.NewDecoder(rdr1).Decode(&cred)
+	err := json.NewDecoder(r.Body).Decode(&cred)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
+		return
+	}
+
+	newPw, err := newPw(cred.Password, 0)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
+		return
+	}
+	err = updatePasswordInvite(cred.Email, cred.EmailToken, newPw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-reset-email-07, update user failed: %v", err)
+		return
+	}
+
+	writeOAuth(w, cred.Email)
+}
+
+func signup(w http.ResponseWriter, r *http.Request) {
+	var cred Credentials
+	err := json.NewDecoder(r.Body).Decode(&cred)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-01, cannot parse JSON credentials %v", err)
 		return
@@ -143,7 +204,6 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//https://security.stackexchange.com/questions/11221/how-big-should-salt-be
-
 	calcPw, err := newPw(cred.Password, 0)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-05, key %v error: %v", cred.Email, err)
@@ -155,23 +215,14 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-06, key %v error: %v", cred.Email, err)
 		return
 	}
-	inviteToken, err := genToken()
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-invite-04, RND %v err %v", cred.Email, err)
-		return
-	}
 
-	err = insertUser(cred.Email, calcPw, emailToken, refreshToken, inviteToken, timeNow())
+	err = insertUser(cred.Email, calcPw, emailToken, refreshToken, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
 		return
 	}
 
 	other := map[string]string{}
-	err = json.NewDecoder(rdr2).Decode(&other)
-	if err != nil {
-		log.Printf("No or wrong json, ignoring [%v]", err)
-	}
 	other["token"] = emailToken
 	other["email"] = cred.Email
 	other["url"] = opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken
@@ -315,7 +366,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Write(oauthEnc)
 	}
-
 }
 
 func displayEmail(w http.ResponseWriter, r *http.Request) {
@@ -440,43 +490,6 @@ func confirmReset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeOAuth(w, cred.Email)
-}
-
-func checkInvite(cred Credentials) error {
-	err := validateEmail(cred.InviteEmail)
-	if err != nil {
-		return err
-	}
-
-	decoded, err := base32.StdEncoding.DecodeString(cred.InviteToken)
-	if err != nil {
-		return err
-	}
-
-	res, err := findAuthByEmail(cred.InviteEmail)
-	if err != nil {
-		return err
-	}
-
-	//token is contributor email, validity date, sponsor email
-	storedPw, calcPw, err := checkPw(cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken, decoded)
-	if err != nil {
-		return err
-	}
-	if bytes.Compare(calcPw, storedPw) != 0 {
-		return fmt.Errorf("invite token is wrong: %v", cred.InviteEmail+cred.ExpireAt+cred.InviteMeta+res.inviteToken)
-	}
-
-	log.Printf("content: %v", cred)
-	layout := "2006-01-02"
-	t, err := time.Parse(layout, cred.ExpireAt)
-	if err != nil {
-		return err
-	}
-	if t.Before(timeNow()) {
-		return fmt.Errorf("Expired: %v before %v", t, timeNow())
-	}
-	return nil
 }
 
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {

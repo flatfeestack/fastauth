@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS auth (
 	email_token VARCHAR(32),
 	forget_email_token VARCHAR(32),
 	invite_token VARCHAR(32),
-	invite_text TEXT,
     sms VARCHAR(16),
     sms_verified TIMESTAMP,
 	totp VARCHAR(64),

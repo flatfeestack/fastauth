@@ -102,9 +102,18 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 	writeOAuth(w, et.Email)
 }
 
-func invite(w http.ResponseWriter, r *http.Request) {
+func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	email := vars["email"]
+
+	var params map[string]interface{}
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&params)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "email in invite is wrong %v", err)
+			return
+		}
+	}
 
 	err := validateEmail(email)
 	if err != nil {
@@ -124,34 +133,50 @@ func invite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	params["token"] = emailToken
+	params["email"] = email
+	params["lang"] = lang(r)
+	//TODO: better check if user is already in DB
 	err = insertUser(email, nil, emailToken, refreshToken, timeNow())
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
-		return
-	}
+		log.Printf("could not insert user %v", err)
+		params["url"] = opts.EmailLinkPrefix + "/login" + url.QueryEscape(email) + "/" + emailToken
 
-	other := map[string]string{}
-	other["token"] = emailToken
-	other["email"] = email
-	other["url"] = opts.EmailLinkPrefix + "/confirm/invite/" + url.QueryEscape(email) + "/" + emailToken
-	other["lang"] = lang(r)
+		e := prepareEmail(email, params,
+			"template-subject-login_"+claims.Scope, "You have been invited again",
+			"template-plain-login_"+claims.Scope, "Click on this link to login: "+params["url"].(string),
+			"template-html-login_"+claims.Scope, params["lang"].(string))
 
-	e := prepareEmail(email, other,
-		"template-subject-invite_", "Validate your email",
-		"template-plain-invite_", "Click on this link: "+other["url"],
-		"template-html-invite_", other["lang"])
+		go func() {
+			err = sendEmail(opts.EmailUrl, e)
+			if err != nil {
+				log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
+			}
+		}()
 
-	go func() {
-		err = sendEmail(opts.EmailUrl, e)
-		if err != nil {
-			log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
-		}
-	}()
-
-	if opts.Env == "dev" || opts.Env == "local" {
-		w.Write([]byte(`{"url":"` + other["url"] + `"}`))
-	} else {
+		//do not write error, we do not want the user to know that this user does not exist (privacy)
 		w.WriteHeader(http.StatusOK)
+		return
+	} else {
+		params["url"] = opts.EmailLinkPrefix + "/confirm/invite/" + url.QueryEscape(email) + "/" + emailToken
+
+		e := prepareEmail(email, params,
+			"template-subject-invite_"+claims.Scope, "You have been invited",
+			"template-plain-invite_"+claims.Scope, "Click on this link to create your account: "+params["url"].(string),
+			"template-html-invite_"+claims.Scope, params["lang"].(string))
+
+		go func() {
+			err = sendEmail(opts.EmailUrl, e)
+			if err != nil {
+				log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
+			}
+		}()
+
+		if opts.Env == "dev" || opts.Env == "local" {
+			w.Write([]byte(`{"url":"` + params["url"].(string) + `"}`))
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
 	}
 }
 
@@ -222,16 +247,16 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	other := map[string]string{}
-	other["token"] = emailToken
-	other["email"] = cred.Email
-	other["url"] = opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken
-	other["lang"] = lang(r)
+	params := map[string]interface{}{}
+	params["token"] = emailToken
+	params["email"] = cred.Email
+	params["url"] = opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken
+	params["lang"] = lang(r)
 
-	e := prepareEmail(cred.Email, other,
+	e := prepareEmail(cred.Email, params,
 		"template-subject-signup_", "Validate your email",
-		"template-plain-signup_", "Click on this link: "+other["url"],
-		"template-html-signup_", other["lang"])
+		"template-plain-signup_", "Click on this link: "+params["url"].(string),
+		"template-html-signup_", params["lang"].(string))
 
 	go func() {
 		err = sendEmail(opts.EmailUrl, e)
@@ -241,7 +266,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if opts.Env == "dev" || opts.Env == "local" {
-		w.Write([]byte(`{"url":"` + other["url"] + `"}`))
+		w.Write([]byte(`{"url":"` + params["url"].(string) + `"}`))
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -254,7 +279,7 @@ func lang(r *http.Request) string {
 	return b.String()
 }
 
-func parseTemplate(filename string, other map[string]string) string {
+func parseTemplate(filename string, other map[string]interface{}) string {
 	textMessage := ""
 	tmplPlain, err := template.ParseFiles(filename)
 	if err == nil {
@@ -421,20 +446,20 @@ func resetEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	other := map[string]string{}
-	err = json.NewDecoder(r.Body).Decode(&other)
+	params := map[string]interface{}{}
+	err = json.NewDecoder(r.Body).Decode(&params)
 	if err != nil {
 		log.Printf("No or wrong json, ignoring [%v]", err)
 	}
 
-	other["email"] = email
-	other["url"] = opts.EmailLinkPrefix + "/confirm/reset/" + email + "/" + forgetEmailToken
-	other["lang"] = lang(r)
+	params["email"] = email
+	params["url"] = opts.EmailLinkPrefix + "/confirm/reset/" + email + "/" + forgetEmailToken
+	params["lang"] = lang(r)
 
-	e := prepareEmail(email, other,
+	e := prepareEmail(email, params,
 		"template-subject-reset_", "Reset your email",
-		"template-plain-reset_", "Click on this link: "+other["url"],
-		"template-html-reset_", other["lang"])
+		"template-plain-reset_", "Click on this link: "+params["url"].(string),
+		"template-html-reset_", params["lang"].(string))
 
 	go func() {
 		err = sendEmail(opts.EmailUrl, e)

@@ -145,11 +145,6 @@ type Opts struct {
 }
 
 func NewOpts() *Opts {
-	err := godotenv.Load()
-	if err != nil {
-		log.Printf("Could not find env file [%v], using defaults", err)
-	}
-
 	opts := &Opts{}
 	flag.StringVar(&opts.Env, "env", lookupEnv("ENV", "local"), "ENV variable")
 	flag.StringVar(&opts.Dev, "dev", lookupEnv("DEV"), "Dev settings with initial secret")
@@ -413,12 +408,13 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/login", login).Methods(http.MethodPost)
 		router.HandleFunc("/refresh", refresh).Methods(http.MethodPost)
 		router.HandleFunc("/signup", signup).Methods(http.MethodPost)
-		router.HandleFunc("/invite/{email}", invite).Methods(http.MethodPost)
 		router.HandleFunc("/reset/{email}", resetEmail).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/signup/{email}/{token}", confirmEmail).Methods(http.MethodGet)
 		router.HandleFunc("/confirm/signup", confirmEmailPost).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/invite", confirmInvite).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/reset", confirmReset).Methods(http.MethodPost)
+
+		router.HandleFunc("/invite/{email}", jwtAuth(invite)).Methods(http.MethodPost)
 		router.HandleFunc("/setup/totp", jwtAuth(setupTOTP)).Methods(http.MethodPost)
 		router.HandleFunc("/confirm/totp/{token}", jwtAuth(confirmTOTP)).Methods(http.MethodPost)
 		router.HandleFunc("/setup/sms/{sms}", jwtAuth(setupSMS)).Methods(http.MethodPost)
@@ -629,6 +625,12 @@ func timeNow() time.Time {
 }
 
 func main() {
+	//the .env should be loaded before showing the banner, as the banner shows also the ENVs
+	err := godotenv.Load()
+	if err != nil {
+		log.Printf("Could not find env file [%v], using defaults", err)
+	}
+
 	f, err := os.Open("banner.txt")
 	if err == nil {
 		banner.Init(os.Stdout, true, false, f)

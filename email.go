@@ -50,7 +50,7 @@ func sendEmail(url string, e EmailRequest) error {
 	return nil
 }
 
-func prepareEmail(mailTo string, data map[string]string, templateSubject string, defaultSubject string,
+func prepareEmail(mailTo string, data map[string]interface{}, templateSubject string, defaultSubject string,
 	templateText string, defaultText string, templateHtml string, lang string) EmailRequest {
 	subject := parseTemplate(templateSubject+lang+".tmpl", data)
 	if subject == "" {

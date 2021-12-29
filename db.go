@@ -230,7 +230,9 @@ func initDB() (*sql.DB, error) {
 	//this will create or alter tables
 	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
 	for _, file := range strings.Split(opts.DBScripts, ":") {
-		//this will stringPointer or alter tables
+		if file == "" {
+			continue
+		}
 		//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
 		if _, err := os.Stat(file); err == nil {
 			fileBytes, err := ioutil.ReadFile(file)
@@ -253,7 +255,7 @@ func initDB() (*sql.DB, error) {
 				}
 			}
 		} else {
-			log.Printf("ignoring file %v (%v)", file, err)
+			log.Printf("ignoring file [%v] (%v)", file, err)
 		}
 	}
 

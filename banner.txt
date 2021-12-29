@@ -1,5 +1,5 @@
 {{ .Title "Auth" "big" 0 }}
 GoVersion: {{ .GoVersion }}, GOOS: {{ .GOOS }}, GOARCH: {{ .GOARCH }}, NumCPU: {{ .NumCPU }}
-GOROOT: {{ .GOROOT }}, PORT: {{ .Env "PORT" }}, DEV: {{ .Env "DEV" }}, DB: {{ .Env "DB_DRIVER" }}
-Compiler: {{ .Compiler }}, Time: {{ .Now "2006-01-02, 15:04:05.9999 +00:00" }}
+GOROOT: {{ .GOROOT }}, PORT: {{ .Env "PORT" }}, ENV: {{ .Env "ENV" }}({{ .Env "DEV" }}), DB: {{ .Env "DB_DRIVER" }}
+Compiler: {{ .Compiler }}, Start time: {{ .Now "2006/01/02 15:04:05" }}
 ===============================================================================

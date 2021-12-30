@@ -47,9 +47,10 @@ func findAuthByEmail(email string) (*dbRes, error) {
 }
 
 func insertUser(email string, pwRaw []byte, emailToken string, refreshToken string, now time.Time) error {
-	var pw string
+	var pw *string
 	if pwRaw != nil {
-		pw = base32.StdEncoding.EncodeToString(pwRaw)
+		s1 := base32.StdEncoding.EncodeToString(pwRaw)
+		pw = &s1
 	}
 	stmt, err := db.Prepare(`INSERT INTO auth (email, password, email_token, refresh_token, created_at) 
 								   VALUES ($1, $2, $3, $4, $5)`)
@@ -76,7 +77,7 @@ func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken st
 func updatePasswordInvite(email string, emailToken string, newPw []byte) error {
 	pw := base32.StdEncoding.EncodeToString(newPw)
 	stmt, err := db.Prepare(`UPDATE auth SET password = $1, email_token = NULL 
-								   WHERE email = $2 AND email_token = $3 AND password = NULL`)
+								   WHERE email = $2 AND email_token = $3 AND password IS NULL`)
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE auth password for %v statement failed: %v", email, err)
 	}

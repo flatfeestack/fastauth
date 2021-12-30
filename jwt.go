@@ -50,7 +50,7 @@ func jwtAuth0(r *http.Request) (*TokenClaims, error) {
 	authHeader := r.Header.Get("Authorization")
 	split := strings.Split(authHeader, " ")
 	if len(split) != 2 {
-		return nil, fmt.Errorf("ERR-02, could not split token: %v", authHeader)
+		return nil, fmt.Errorf("ERR-02, could not split token, auth header is: [%v]", authHeader)
 	}
 	bearerToken := split[1]
 

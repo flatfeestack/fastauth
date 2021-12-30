@@ -140,10 +140,10 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	err = insertUser(email, nil, emailToken, refreshToken, timeNow())
 	if err != nil {
 		log.Printf("could not insert user %v", err)
-		params["url"] = opts.EmailLinkPrefix + "/login" + url.QueryEscape(email) + "/" + emailToken
+		params["url"] = opts.EmailLinkPrefix + "/login"
 
 		e := prepareEmail(email, params,
-			"template-subject-login_"+claims.Scope, "You have been invited again",
+			"template-subject-login_"+claims.Scope, "You have been invited again by "+claims.Subject,
 			"template-plain-login_"+claims.Scope, "Click on this link to login: "+params["url"].(string),
 			"template-html-login_"+claims.Scope, params["lang"].(string))
 
@@ -158,10 +158,10 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		w.WriteHeader(http.StatusOK)
 		return
 	} else {
-		params["url"] = opts.EmailLinkPrefix + "/confirm/invite/" + url.QueryEscape(email) + "/" + emailToken
+		params["url"] = opts.EmailLinkPrefix + "/confirm/invite/" + url.QueryEscape(email) + "/" + emailToken + "/" + claims.Subject
 
 		e := prepareEmail(email, params,
-			"template-subject-invite_"+claims.Scope, "You have been invited",
+			"template-subject-invite_"+claims.Scope, "You have been invited by "+claims.Subject,
 			"template-plain-invite_"+claims.Scope, "Click on this link to create your account: "+params["url"].(string),
 			"template-html-invite_"+claims.Scope, params["lang"].(string))
 

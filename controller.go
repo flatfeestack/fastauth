@@ -899,3 +899,11 @@ func asUser(w http.ResponseWriter, r *http.Request, _ string) {
 	email := m["email"]
 	writeOAuth(w, email)
 }
+
+func deleteUser(w http.ResponseWriter, r *http.Request, _ string) {
+
+}
+
+func updateUser(w http.ResponseWriter, r *http.Request, _ string) {
+
+}

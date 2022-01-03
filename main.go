@@ -133,6 +133,7 @@ type Opts struct {
 	OAuthPass       string
 	ResetRefresh    bool
 	Users           string
+	AdminEndpoints  bool
 	UserEndpoints   bool
 	OauthEndpoints  bool
 	LdapServer      bool
@@ -178,6 +179,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", lookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
 	flag.StringVar(&opts.Users, "users", lookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
+	flag.BoolVar(&opts.AdminEndpoints, "admin-endpoints", lookupEnv("ADMIN_ENDPOINTS") != "", "Enable admin-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.UserEndpoints, "user-endpoints", lookupEnv("USER_ENDPOINTS") != "", "Enable user-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.OauthEndpoints, "oauth-enpoints", lookupEnv("OAUTH_ENDPOINTS") != "", "Enable oauth-facing endpoints. In dev mode these are enabled by default")
 	flag.BoolVar(&opts.LdapServer, "ldap-server", lookupEnv("LDAP_SERVER") != "", "Enable ldap server. In dev mode these are enabled by default")
@@ -234,6 +236,7 @@ func NewOpts() *Opts {
 			}
 			opts.EdDSA = base32.StdEncoding.EncodeToString(edPrivKey)
 		}
+		opts.AdminEndpoints = true
 		opts.OauthEndpoints = true
 		opts.UserEndpoints = true
 		opts.LdapServer = true
@@ -449,7 +452,11 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 	}
 
-	router.HandleFunc("/admin/login-as/{email}", jwtAuthAdmin(asUser, admins)).Methods(http.MethodPost)
+	if opts.AdminEndpoints {
+		router.HandleFunc("/users/usernames/{email}/cancellation", jwtAuthAdmin(deleteUser, admins)).Methods(http.MethodPost)
+		router.HandleFunc("/users/usernames/{email}/attributes", jwtAuthAdmin(updateUser, admins)).Methods(http.MethodPost)
+		router.HandleFunc("/admin/login-as/{email}", jwtAuthAdmin(asUser, admins)).Methods(http.MethodPost)
+	}
 
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[404] no route matched for: %s, %s", r.URL, r.Method)

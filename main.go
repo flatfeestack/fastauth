@@ -77,9 +77,7 @@ type Credentials struct {
 }
 
 type TokenClaims struct {
-	Scope            string                 `json:"scope,omitempty"`
-	InviteMetaSystem map[string]interface{} `json:"inviteMetaSystem,omitempty"`
-	InviteMetaUser   map[string]interface{} `json:"inviteMetaUser,omitempty"`
+	Scope string `json:"scope,omitempty"`
 	jwt.Claims
 }
 

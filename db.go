@@ -63,6 +63,17 @@ func insertUser(email string, pwRaw []byte, emailToken string, refreshToken stri
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
+func deleteDbUser(email string) error {
+	stmt, err := db.Prepare(`DELETE FROM auth where email = $1`)
+	if err != nil {
+		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
+	}
+	defer closeAndLog(stmt)
+
+	res, err := stmt.Exec(email, email)
+	return handleErr(res, err, "DELETE FROM auth", email)
+}
+
 func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken string) error {
 	stmt, err := db.Prepare("UPDATE auth SET refresh_token = $1 WHERE refresh_token = $2 and email=$3")
 	if err != nil {
@@ -72,6 +83,17 @@ func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken st
 
 	res, err := stmt.Exec(newRefreshToken, oldRefreshToken, email)
 	return handleErr(res, err, "UPDATE refreshToken", "n/a")
+}
+
+func updateSystemMeta(email string, systemMeta string) error {
+	stmt, err := db.Prepare("UPDATE auth SET meta_system = $1 WHERE email=$2")
+	if err != nil {
+		return fmt.Errorf("prepare UPDATE meta_system statement failed: %v", err)
+	}
+	defer closeAndLog(stmt)
+
+	res, err := stmt.Exec(systemMeta, email)
+	return handleErr(res, err, "UPDATE meta_system", "n/a")
 }
 
 func updatePasswordInvite(email string, emailToken string, newPw []byte) error {

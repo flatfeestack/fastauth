@@ -14,6 +14,7 @@ import (
 	"golang.org/x/text/language"
 	"gopkg.in/square/go-jose.v2"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -266,6 +267,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if opts.Env == "dev" || opts.Env == "local" {
+		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"url":"` + params["url"].(string) + `"}`))
 	} else {
 		w.WriteHeader(http.StatusOK)
@@ -535,7 +537,6 @@ func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
 	p.Uri = totp.ProvisioningUri(claims.Subject, opts.Issuer)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(p)
 }
 
@@ -900,10 +901,34 @@ func asUser(w http.ResponseWriter, r *http.Request, _ string) {
 	writeOAuth(w, email)
 }
 
-func deleteUser(w http.ResponseWriter, r *http.Request, _ string) {
-
+func deleteUser(w http.ResponseWriter, r *http.Request, admin string) {
+	m := mux.Vars(r)
+	email := m["email"]
+	err := deleteDbUser(email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "could not delete user %v, requested by %s", err, admin)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
-func updateUser(w http.ResponseWriter, r *http.Request, _ string) {
-
+func updateUser(w http.ResponseWriter, r *http.Request, admin string) {
+	//now we update the meta data that comes as system meta data. Thus we trust the system to provide the correct metadata, not the user
+	m := mux.Vars(r)
+	email := m["email"]
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "could not update user %v, requested by %s", err, admin)
+		return
+	}
+	if !json.Valid(b) {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "invalid json [%s], requested by %s", string(b), admin)
+		return
+	}
+	err = updateSystemMeta(string(b), email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "could not update system meta %v, requested by %s", err, admin)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

@@ -116,13 +116,10 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 	return refreshClaims, nil
 }
 
-func encodeAccessToken(subject string, scope string, audience string,
-	issuer string, inviteTokenSystem map[string]interface{},
-	inviteTokenUser map[string]interface{}) (string, error) {
+func encodeAccessToken(subject string, scope string, audience string, issuer string,
+	systemMeta map[string]interface{}, userMeta map[string]interface{}) (string, error) {
 	tokenClaims := &TokenClaims{
-		Scope:            scope,
-		InviteMetaSystem: inviteTokenSystem,
-		InviteMetaUser:   inviteTokenUser,
+		Scope: scope,
 		Claims: jwt.Claims{
 			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
 			Subject:  subject,
@@ -147,7 +144,7 @@ func encodeAccessToken(subject string, scope string, audience string,
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
-	accessTokenString, err := jwt.Signed(sig).Claims(tokenClaims).CompactSerialize()
+	accessTokenString, err := jwt.Signed(sig).Claims(userMeta).Claims(systemMeta).Claims(tokenClaims).CompactSerialize()
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}

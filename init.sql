@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS auth (
 	totp VARCHAR(64),
     totp_verified TIMESTAMP,
 	error_count INT DEFAULT 0,
-    meta_user VARCHAR(255),
     meta_system TEXT,
     created_at TIMESTAMP NOT NULL
 );

@@ -60,17 +60,22 @@ func confirmEmail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", email, token, err)
 		return
 	}
-	writeOAuth(w, email)
-}
 
-func writeOAuth(w http.ResponseWriter, email string) {
 	result, err := findAuthByEmail(email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", email, err)
 		return
 	}
+	writeOAuth(w, result)
+}
 
-	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, email)
+func writeOAuth(w http.ResponseWriter, result *dbRes) {
+	encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "cannot encode tokens %v", err)
+		return
+	}
+
 	oauth := OAuth{
 		AccessToken:  encodedAccessToken,
 		TokenType:    "Bearer",
@@ -100,7 +105,14 @@ func confirmEmailPost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "invalid_request", "blocked", "ERR-confirm-email-01, update email token for %v failed, token %v: %v", et.Email, et.EmailToken, err)
 		return
 	}
-	writeOAuth(w, et.Email)
+
+	result, err := findAuthByEmail(et.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", et.Email, err)
+		return
+	}
+
+	writeOAuth(w, result)
 }
 
 func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
@@ -200,7 +212,13 @@ func confirmInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeOAuth(w, cred.Email)
+	result, err := findAuthByEmail(cred.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", cred.Email, err)
+		return
+	}
+
+	writeOAuth(w, result)
 }
 
 func signup(w http.ResponseWriter, r *http.Request) {
@@ -516,7 +534,13 @@ func confirmReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeOAuth(w, cred.Email)
+	result, err := findAuthByEmail(cred.Email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", cred.Email, err)
+		return
+	}
+
+	writeOAuth(w, result)
 }
 
 func setupTOTP(w http.ResponseWriter, _ *http.Request, claims *TokenClaims) {
@@ -725,11 +749,35 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
 		return
 	}
-	if grantType == "refresh_token" {
-		refresh(w, r)
-		return
 
-	} else if grantType == "authorization_code" {
+	switch grantType {
+	case "refresh_token":
+		refresh(w, r)
+	case "client_credentials":
+		err = basicAuth(r)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "Basic auth failed: %v", err)
+			return
+		}
+
+		encodedAccessToken, err := encodeAccessToken("system", opts.Scope, opts.Audience, opts.Issuer, nil)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "Basic auth failed: %v", err)
+			return
+		}
+
+		oauth := OAuthSystem{
+			AccessToken: encodedAccessToken,
+			TokenType:   "Bearer",
+		}
+		oauthEnc, err := json.Marshal(oauth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
+			return
+		}
+		w.Write(oauthEnc)
+
+	case "authorization_code":
 		code, err := param("code", r)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
@@ -766,10 +814,18 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeOAuth(w, cc.Subject)
-		return
+		result, err := findAuthByEmail(cc.Subject)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", cc.Subject, err)
+			return
+		}
 
-	} else if grantType == "password" && opts.PasswordFlow {
+		writeOAuth(w, result)
+	case "password":
+		if !opts.PasswordFlow {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05a, no username")
+			return
+		}
 		email, err := param("username", r)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-05a, no username")
@@ -796,29 +852,9 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		encodedAccessToken, encodedRefreshToken, expiresAt, err := encodeTokens(result, email)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-07, cannot verify refresh token %v", err)
-			return
-		}
-
-		oauth := OAuth{
-			AccessToken:  encodedAccessToken,
-			TokenType:    "Bearer",
-			RefreshToken: encodedRefreshToken,
-			Expires:      strconv.FormatInt(expiresAt, 10),
-		}
-		oauthEnc, err := json.Marshal(oauth)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-oauth-08, cannot verify refresh token %v", err)
-			return
-		}
-		w.Write(oauthEnc)
-		return
-
-	} else {
+		writeOAuth(w, result)
+	default:
 		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-09, unsupported grant type")
-		return
 	}
 }
 
@@ -898,7 +934,12 @@ func timeWarp(w http.ResponseWriter, r *http.Request) {
 func asUser(w http.ResponseWriter, r *http.Request, _ string) {
 	m := mux.Vars(r)
 	email := m["email"]
-	writeOAuth(w, email)
+	result, err := findAuthByEmail(email)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", email, err)
+		return
+	}
+	writeOAuth(w, result)
 }
 
 func deleteUser(w http.ResponseWriter, r *http.Request, admin string) {

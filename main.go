@@ -104,6 +104,13 @@ type OAuth struct {
 	Expires      string `json:"expires_in"`
 }
 
+//system user does not need refresh token
+type OAuthSystem struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	Expires     string `json:"expires_in"`
+}
+
 type Opts struct {
 	Env             string
 	Dev             string
@@ -175,6 +182,8 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.HS256, "hs256", lookupEnv("HS256"), "HS256 key")
 	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key")
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key")
+	flag.StringVar(&opts.OAuthUser, "oauth-user", lookupEnv("OAUTH_USER"), "Basic auth username for the server meta data")
+	flag.StringVar(&opts.OAuthPass, "oauth-pass", lookupEnv("OAUTH_PASS"), "Basic auth password for the server meta data")
 	flag.BoolVar(&opts.ResetRefresh, "reset-refresh", lookupEnv("RESET_REFRESH") != "", "Reset refresh token when setting the token")
 	flag.StringVar(&opts.Users, "users", lookupEnv("USERS"), "add these initial users. E.g, -users tom@test.ch:pw123;test@test.ch:123pw")
 	flag.BoolVar(&opts.AdminEndpoints, "admin-endpoints", lookupEnv("ADMIN_ENDPOINTS") != "", "Enable admin-facing endpoints. In dev mode these are enabled by default")
@@ -233,6 +242,12 @@ func NewOpts() *Opts {
 				log.Fatalf("cannot generate eddsa key %v", err)
 			}
 			opts.EdDSA = base32.StdEncoding.EncodeToString(edPrivKey)
+		}
+		if opts.OAuthUser == "" {
+			opts.OAuthUser = "clientId"
+		}
+		if opts.OAuthPass == "" {
+			opts.OAuthPass = "secret"
 		}
 		opts.AdminEndpoints = true
 		opts.OauthEndpoints = true
@@ -440,7 +455,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 
 	if opts.OauthEndpoints {
 		router.HandleFunc("/oauth/login", login).Methods(http.MethodPost)
-		router.HandleFunc("/oauth/token", basicAuth(oauth)).Methods(http.MethodPost)
+		router.HandleFunc("/oauth/token", oauth).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/authorize", authorize).Methods(http.MethodGet)
 		//convenience function
@@ -561,29 +576,24 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func basicAuth(next func(w http.ResponseWriter, r *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if opts.OAuthUser != "" || opts.OAuthPass != "" {
-			user, pass, ok := r.BasicAuth()
-			if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
-				clientId, err := param("client_id", r)
-				if err != nil {
-					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
-					return
-				}
-				clientSecret, err := param("client_secret", r)
-				if err != nil {
-					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-01, basic auth failed")
-					return
-				}
-				if clientId != opts.OAuthUser || clientSecret != opts.OAuthPass {
-					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-oauth-04, basic auth failed")
-					return
-				}
+func basicAuth(r *http.Request) error {
+	if opts.OAuthUser != "" || opts.OAuthPass != "" {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
+			clientId, err := param("client_id", r)
+			if err != nil {
+				return fmt.Errorf("no client_id %v", err)
+			}
+			clientSecret, err := param("client_secret", r)
+			if err != nil {
+				return fmt.Errorf("no client_secret %v", err)
+			}
+			if clientId != opts.OAuthUser || clientSecret != opts.OAuthPass {
+				return fmt.Errorf("no match, user/pass %v", err)
 			}
 		}
-		next(w, r)
 	}
+	return nil
 }
 
 func param(name string, r *http.Request) (string, error) {

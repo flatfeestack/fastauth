@@ -116,12 +116,20 @@ func checkRefreshToken(token string) (*RefreshClaims, error) {
 	return refreshClaims, nil
 }
 
-func encodeAccessToken(subject string, scope string, audience string, issuer string,
-	systemMeta map[string]interface{}, userMeta map[string]interface{}) (string, error) {
+func encodeAccessToken(subject string, scope string, audience string, issuer string, systemMeta map[string]interface{}) (string, error) {
+	//if we have a system user, the system user only gets an access token that lives as long as the refresh token
+	//normal users get both, access and refresh token
+	var expiry *jwt.NumericDate
+	if subject == "system" {
+		expiry = jwt.NewNumericDate(timeNow().Add(refreshExp))
+	} else {
+		expiry = jwt.NewNumericDate(timeNow().Add(tokenExp))
+	}
+
 	tokenClaims := &TokenClaims{
 		Scope: scope,
 		Claims: jwt.Claims{
-			Expiry:   jwt.NewNumericDate(timeNow().Add(tokenExp)),
+			Expiry:   expiry,
 			Subject:  subject,
 			Audience: []string{audience},
 			Issuer:   issuer,
@@ -144,7 +152,7 @@ func encodeAccessToken(subject string, scope string, audience string, issuer str
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
-	accessTokenString, err := jwt.Signed(sig).Claims(userMeta).Claims(systemMeta).Claims(tokenClaims).CompactSerialize()
+	accessTokenString, err := jwt.Signed(sig).Claims(systemMeta).Claims(tokenClaims).CompactSerialize()
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", tokenClaims.Subject, err)
 	}
@@ -223,37 +231,49 @@ func checkRefresh(email string, token string) (string, string, int64, error) {
 		return "", "", 0, fmt.Errorf("ERR-refresh-05, refresh token mismatch")
 
 	}
-	return encodeTokens(result, email)
+	return encodeTokens(result)
 }
 
-func encodeTokens(result *dbRes, email string) (string, string, int64, error) {
-	jsonMapSystem, err := toJsonMap(result.metaSystem)
+func encodeTokens(result *dbRes) (string, string, int64, error) {
+	encodedAccessToken, err := encodeAccessTokens(result.email, result.metaSystem)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("cannot encode system meta in encodeTokens for %v, %v", email, err)
+		return "", "", 0, err
 	}
-	jsonMapUser, err := toJsonMap(result.metaUser)
+	encodedRefreshToken, expireAt, err := encodeRefreshTokens(result.email, result.refreshToken)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("cannot encode user meta in encodeTokens for %v, %v", email, err)
+		return "", "", 0, err
+	}
+	return encodedAccessToken, encodedRefreshToken, expireAt, nil
+}
+
+func encodeAccessTokens(email string, metaSystem *string) (string, error) {
+	jsonMapSystem, err := toJsonMap(metaSystem)
+	if err != nil {
+		return "", fmt.Errorf("cannot encode system meta in encodeTokens for %v, %v", email, err)
 	}
 
-	encodedAccessToken, err := encodeAccessToken(email, opts.Scope, opts.Audience, opts.Issuer, jsonMapSystem, jsonMapUser)
+	encodedAccessToken, err := encodeAccessToken(email, opts.Scope, opts.Audience, opts.Issuer, jsonMapSystem)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
+		return "", fmt.Errorf("ERR-refresh-06, cannot set access token for %v, %v", email, err)
 	}
 
-	refreshToken := result.refreshToken
+	return encodedAccessToken, nil
+}
+
+func encodeRefreshTokens(email string, refreshToken string) (string, int64, error) {
 	if opts.ResetRefresh {
+		var err error
 		refreshToken, err = resetRefreshToken(refreshToken, email)
 		if err != nil {
-			return "", "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
+			return "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
 		}
 	}
 
 	encodedRefreshToken, expiresAt, err := encodeRefreshToken(email, refreshToken)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", email, err)
+		return "", 0, fmt.Errorf("ERR-refresh-08, cannot set refresh token for %v, %v", email, err)
 	}
-	return encodedAccessToken, encodedRefreshToken, expiresAt, nil
+	return encodedRefreshToken, expiresAt, nil
 }
 
 func checkCodeToken(token string) (*CodeClaims, error) {

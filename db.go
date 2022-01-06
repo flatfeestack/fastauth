@@ -14,6 +14,7 @@ import (
 )
 
 type dbRes struct {
+	email        string
 	password     []byte
 	refreshToken string
 	emailToken   *string
@@ -23,17 +24,16 @@ type dbRes struct {
 	totpVerified *time.Time
 	errorCount   int
 	metaSystem   *string
-	metaUser     *string
 }
 
 func findAuthByEmail(email string) (*dbRes, error) {
 	var res dbRes
 	var pw string
-	query := `SELECT sms, password, meta_system, meta_user, refresh_token, 
+	query := `SELECT sms, password, meta_system, refresh_token, 
        				 email_token, totp, sms_verified, totp_verified, error_count 
               FROM auth WHERE email = $1`
 	err := db.QueryRow(query, email).Scan(
-		&res.sms, &pw, &res.metaSystem, &res.metaUser, &res.refreshToken, &res.emailToken,
+		&res.sms, &pw, &res.metaSystem, &res.refreshToken, &res.emailToken,
 		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
 
 	if err != nil {
@@ -43,6 +43,7 @@ func findAuthByEmail(email string) (*dbRes, error) {
 	if err != nil {
 		return nil, err
 	}
+	res.email = email
 	return &res, nil
 }
 
@@ -224,7 +225,7 @@ func handleErr(res sql.Result, err error, info string, email string) error {
 
 ///////// Setup
 // Meta data can be additional information that will be encoded in the JWT token
-func addInitialUserWithMeta(username string, password string, metaSystem *string, metaUser *string) error {
+func addInitialUserWithMeta(username string, password string, metaSystem *string) error {
 	res, err := findAuthByEmail(username)
 	if res == nil || err != nil {
 		dk, err := newPw(password, 0)
@@ -290,19 +291,15 @@ func setupDB() {
 		//add user for development
 		users := strings.Split(opts.Users, ";")
 		for _, user := range users {
-			userPwMeta := strings.Split(user, ":")
+			userPwMeta := strings.SplitN(user, ":", 3)
 
 			var metaSystem *string
-			var metaUser *string
 			if len(userPwMeta) >= 3 {
 				metaSystem = &userPwMeta[2]
 			}
-			if len(userPwMeta) >= 4 {
-				metaUser = &userPwMeta[3]
-			}
 
-			if len(userPwMeta) == 2 {
-				err := addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], metaSystem, metaUser)
+			if len(userPwMeta) >= 2 {
+				err := addInitialUserWithMeta(userPwMeta[0], userPwMeta[1], metaSystem)
 				if err == nil {
 					log.Printf("insterted user %v", userPwMeta[0])
 				} else {

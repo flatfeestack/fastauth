@@ -576,24 +576,25 @@ func newTOTP(secret string) *gotp.TOTP {
 	return gotp.NewTOTP(secret, 6, 30, hasher)
 }
 
-func basicAuth(r *http.Request) error {
+func basicAuth(r *http.Request) (string, error) {
 	if opts.OAuthUser != "" || opts.OAuthPass != "" {
 		user, pass, ok := r.BasicAuth()
 		if !ok || user != opts.OAuthUser || pass != opts.OAuthPass {
 			clientId, err := param("client_id", r)
 			if err != nil {
-				return fmt.Errorf("no client_id %v", err)
+				return "", fmt.Errorf("no client_id %v", err)
 			}
 			clientSecret, err := param("client_secret", r)
 			if err != nil {
-				return fmt.Errorf("no client_secret %v", err)
+				return "", fmt.Errorf("no client_secret %v", err)
 			}
 			if clientId != opts.OAuthUser || clientSecret != opts.OAuthPass {
-				return fmt.Errorf("no match, user/pass %v", err)
+				return "", fmt.Errorf("no match, user/pass %v", err)
 			}
 		}
+		return user, nil
 	}
-	return nil
+	return "", fmt.Errorf("no user/pass set")
 }
 
 func param(name string, r *http.Request) (string, error) {

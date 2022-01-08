@@ -754,13 +754,13 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		refresh(w, r)
 	case "client_credentials":
-		err = basicAuth(r)
+		user, err := basicAuth(r)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "Basic auth failed: %v", err)
 			return
 		}
 
-		encodedAccessToken, err := encodeAccessToken("system", opts.Scope, opts.Audience, opts.Issuer, nil)
+		encodedAccessToken, err := encodeAccessToken(user, opts.Scope, opts.Audience, opts.Issuer, nil)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "Basic auth failed: %v", err)
 			return

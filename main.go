@@ -17,23 +17,21 @@ import (
 	"github.com/dimiro1/banner"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
-	"github.com/kjk/dailyrotate"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
+	log "github.com/sirupsen/logrus"
 	ldap "github.com/vjeantet/ldapserver"
 	"github.com/xlzd/gotp"
 	ed25519 "golang.org/x/crypto/ed25519"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 	"hash/crc64"
-	"log"
 	rnd "math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -53,7 +51,6 @@ var (
 	refreshExp   time.Duration
 	codeExp      time.Duration
 	hoursAdd     int
-	logFile      *dailyrotate.File
 	admins       []string
 )
 
@@ -314,13 +311,6 @@ func NewOpts() *Opts {
 		privEdDSAKid = hex.EncodeToString(kid)
 	}
 
-	pathFormat := filepath.Join(opts.LogPath, "auth_2006-01-02.txt")
-	w, err := dailyrotate.NewFile(pathFormat, func(string, bool) {})
-	if err != nil {
-		log.Fatalf("cannot log")
-	}
-	logFile = w
-
 	return opts
 }
 
@@ -524,7 +514,7 @@ func genToken() (string, error) {
 
 func writeErr(w http.ResponseWriter, code int, error string, detailError string, format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	log.Printf(msg)
+	log.Errorf(msg)
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")

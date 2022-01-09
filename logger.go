@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"github.com/felixge/httpsnoop"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"net/http"
 	"strconv"
@@ -138,11 +138,9 @@ func logHTTPReq(ri *HTTPReqInfo) {
 		referer + `","` +
 		userAgent + `"` + "\n"
 
-	log.Print(msg)
-	if logFile != nil {
-		_, err := logFile.Write([]byte(timeNow().Format(time.RFC3339Nano) + `,` + msg))
-		if err != nil {
-			log.Printf("cannot write logfile: %v", err)
-		}
+	if ri.code != 200 {
+		log.Error(msg)
+	} else {
+		log.Print(msg)
 	}
 }

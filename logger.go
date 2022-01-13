@@ -77,7 +77,7 @@ func logRequestHandler(h http.Handler) http.Handler {
 		ri.code = m.Code
 		ri.size = m.Written
 		ri.duration = m.Duration
-		logHTTPReq(ri)
+		logHTTPReq(ri, w.Header())
 	}
 	return http.HandlerFunc(fn)
 }
@@ -120,7 +120,7 @@ func isPrivateSubnet(ipAddress net.IP) bool {
 	return false
 }
 
-func logHTTPReq(ri *HTTPReqInfo) {
+func logHTTPReq(ri *HTTPReqInfo, h http.Header) {
 	referer := strings.Replace(ri.referer, `"`, `""`, -1)
 	if referer == "" {
 		referer = "-"
@@ -137,6 +137,11 @@ func logHTTPReq(ri *HTTPReqInfo) {
 		strconv.FormatInt(ri.size, 10) + `,"` +
 		referer + `","` +
 		userAgent + `"` + "\n"
+
+	if ri.code == 302 || ri.code == 303 {
+		msg += `,loc:` +
+			h.Get("Location")
+	}
 
 	log.Print(msg)
 	if logFile != nil {

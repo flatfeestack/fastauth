@@ -455,12 +455,16 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 
 	if opts.OauthEndpoints {
 		router.HandleFunc("/oauth/login", login).Methods(http.MethodPost)
+		//TODO: check regitier
+		router.HandleFunc("/ap/login", login).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/token", oauth).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/authorize", authorize).Methods(http.MethodGet)
 		//convenience function
 		if opts.Env == "dev" || opts.Env == "local" {
 			router.HandleFunc("/", authorize).Methods(http.MethodGet)
+			//TODO: check regitier
+			router.HandleFunc("/ap/registration", authorize).Methods(http.MethodGet)
 		}
 		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 	}

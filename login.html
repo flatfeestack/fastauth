@@ -79,13 +79,39 @@
             const data = new FormData(login);
             const params1 = Object.fromEntries(data);
             const params2 = Object.fromEntries(urlParams);
+
+            //https://robkendal.co.uk/blog/2020-02-04-creating-unique-merged-arrays-using-javascripts-set-and-more
             const merged = {...params1, ...params2};
+            //var array3 = arrayUnique(merged);
+            console.error("response2", JSON.stringify(merged));
 
+            for (const [key, value] of Object.entries(merged)) {
+                console.log(`${key}: ${value}`);
+            }
 
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", "login");
-            xhr.setRequestHeader("Content-Type", "application/json");
-            xhr.send(JSON.stringify(merged));
+            try {
+
+            fetch("login", {
+                method: "POST",
+                mode: 'no-cors',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({"email":"Sevi123@a.a","password":"1234"})})
+                .then(function(res) {
+                    console.error("response", res);
+                    return true;
+                    //if (res.redirected) {
+                    //    window.location.href = res.url;
+                    //}
+                })
+                .catch(function(err) {
+                    console.error(err);
+                });
+            } catch (e) {
+                console.error(e + " url: " + e);
+            }
+            //console.log(test)
         }
 
         function register() {
@@ -93,21 +119,23 @@
             const data = new FormData(reg);
             const json = JSON.stringify(Object.fromEntries(data));
 
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", "signup");
-            xhr.setRequestHeader("Content-Type", "application/json");
-            xhr.onreadystatechange = function () {
-                if (xhr.readyState === 4 && xhr.status === 200) {
-                    if(xhr.response.length > 0) {
-                        const obj = JSON.parse(xhr.response);
-                        const registrationLink = document.getElementById("registrationLink");
-                        registrationLink.children[0].setAttribute("href", obj.url);
-                        registrationLink.style.display = "block";
-                    }
+            fetch("signup", {
+                method: "POST",
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: json})
+                .then(response => response.json())
+                .then(data => {
+                    const registrationLink = document.getElementById("registrationLink");
+                    registrationLink.children[0].setAttribute("href", data.url);
+                    registrationLink.style.display = "block";
                     changeForm('login')
-                }
-            };
-            xhr.send(json);
+                    })
+                .catch(function(err) {
+                    console.info(err + " url: " + url);
+                });
         }
     </script>
 </head>
@@ -124,7 +152,7 @@
     <form id="login-form">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
-        <button onclick="login()">LOGIN</button>
+        <button onclick="login()">LOGIN1</button>
         <p class="message">Not registered? <a href="#" onclick="changeForm('register')">Create an account</a></p>
     </form>
     <p id="registrationLink"><a href="#">Registration Link</a></p>

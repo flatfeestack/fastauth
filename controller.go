@@ -390,7 +390,11 @@ func login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
-		w.WriteHeader(http.StatusSeeOther)
+		if cred.RedirectAs201 {
+			w.WriteHeader(http.StatusCreated)
+		} else {
+			w.WriteHeader(http.StatusSeeOther)
+		}
 	} else {
 		refreshToken, err := resetRefreshToken(result.refreshToken, cred.Email)
 		if err != nil {

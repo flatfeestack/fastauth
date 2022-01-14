@@ -79,39 +79,30 @@
             const data = new FormData(login);
             const params1 = Object.fromEntries(data);
             const params2 = Object.fromEntries(urlParams);
-
-            //https://robkendal.co.uk/blog/2020-02-04-creating-unique-merged-arrays-using-javascripts-set-and-more
             const merged = {...params1, ...params2};
-            //var array3 = arrayUnique(merged);
-            console.error("response2", JSON.stringify(merged));
+            merged["redirectAs201"]=true
 
-            for (const [key, value] of Object.entries(merged)) {
-                console.log(`${key}: ${value}`);
-            }
-
-            try {
+            //for (const [key, value] of Object.entries(merged)) {
+            //    console.log(`${key}: ${value}`);
+            //}
 
             fetch("login", {
                 method: "POST",
-                mode: 'no-cors',
+                redirect: 'manual', //this does not return the redirect location, so we must convert the 303 to a 201, see https://github.com/whatwg/fetch/issues/763
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({"email":"Sevi123@a.a","password":"1234"})})
+                body: JSON.stringify(merged)})
                 .then(function(res) {
-                    console.error("response", res);
-                    return true;
-                    //if (res.redirected) {
-                    //    window.location.href = res.url;
-                    //}
+                    if (res.status == 201) {
+                        window.location.href = res.headers.get("Location");
+                    }
                 })
                 .catch(function(err) {
                     console.error(err);
                 });
-            } catch (e) {
-                console.error(e + " url: " + e);
-            }
-            //console.log(test)
+
+            return false;
         }
 
         function register() {
@@ -122,7 +113,6 @@
             fetch("signup", {
                 method: "POST",
                 headers: {
-                    'Accept': 'application/json',
                     'Content-Type': 'application/json'
                 },
                 body: json})
@@ -134,8 +124,9 @@
                     changeForm('login')
                     })
                 .catch(function(err) {
-                    console.info(err + " url: " + url);
+                    console.error(err);
                 });
+            return false;
         }
     </script>
 </head>
@@ -145,14 +136,14 @@
     <form id="register-form">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
-        <button onclick="register()">CREATE ACCOUNT</button>
+        <button onclick="return register()">CREATE ACCOUNT</button>
         <p class="message">Already registered? <a href="#" onclick="changeForm('login')">Sign In</a></p>
     </form>
 
     <form id="login-form">
         <input name="email" type="email" placeholder="email address"/>
         <input name="password" type="password" placeholder="password"/>
-        <button onclick="login()">LOGIN1</button>
+        <button onclick="return login()">LOGIN1</button>
         <p class="message">Not registered? <a href="#" onclick="changeForm('register')">Create an account</a></p>
     </form>
     <p id="registrationLink"><a href="#">Registration Link</a></p>

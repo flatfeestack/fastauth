@@ -70,7 +70,8 @@ type Credentials struct {
 	CodeChallenge           string `json:"code_challenge,omitempty"`
 	CodeCodeChallengeMethod string `json:"code_challenge_method,omitempty"`
 	//Token stuff
-	EmailToken string `json:"emailToken,omitempty"`
+	EmailToken    string `json:"emailToken,omitempty"`
+	RedirectAs201 bool   `json:"redirectAs201,omitempty"`
 }
 
 type TokenClaims struct {

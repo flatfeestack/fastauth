@@ -264,6 +264,9 @@ func NewOpts() *Opts {
 	}
 
 	admins = strings.Split(opts.Admins, ";")
+	if opts.OAuthUser != "" {
+		admins = append(admins, opts.OAuthUser)
+	}
 
 	if opts.HS256 == "" && opts.RS256 == "" && opts.EdDSA == "" {
 		fmt.Printf("Paramter hs256, rs256, or eddsa not set. One of them is mandatory. Choose one\n")
@@ -462,7 +465,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 
 	if opts.AdminEndpoints {
 		router.HandleFunc("/users/usernames/{email}/cancellation", jwtAuthAdmin(deleteUser, admins)).Methods(http.MethodPost)
-		router.HandleFunc("/users/usernames/{email}/attributes", jwtAuthAdmin(updateUser, admins)).Methods(http.MethodPost)
+		router.HandleFunc("/users/usernames/{email}/attributes", jwtAuthAdmin(updateUser, admins)).Methods(http.MethodPatch)
 		router.HandleFunc("/admin/login-as/{email}", jwtAuthAdmin(asUser, admins)).Methods(http.MethodPost)
 	}
 

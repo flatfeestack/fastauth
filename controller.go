@@ -970,10 +970,10 @@ func updateUser(w http.ResponseWriter, r *http.Request, admin string) {
 		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "invalid json [%s], requested by %s", string(b), admin)
 		return
 	}
-	err = updateSystemMeta(string(b), email)
+	err = updateSystemMeta(email, string(b))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "could not update system meta %v, requested by %s", err, admin)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }

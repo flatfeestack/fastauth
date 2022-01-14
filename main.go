@@ -225,7 +225,27 @@ func NewOpts() *Opts {
 		if strings.ToLower(opts.RS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
 			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
 		} else if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
-			rsaPrivKey, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
+			//work around this issue: https://github.com/golang/go/issues/38548
+			//we want for testing have the same key, I don't care for any database keys
+			rsaPrivKey1, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
+			if err != nil {
+				log.Fatalf("cannot generate rsa key %v", err)
+			}
+			rsaPrivKey2, err := rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
+			if err != nil {
+				log.Fatalf("cannot generate rsa key %v", err)
+			}
+			for rsaPrivKey1.Equal(rsaPrivKey2) {
+				rsaPrivKey2, err = rsa.GenerateKey(rnd.New(rnd.NewSource(int64(crc64.Checksum([]byte(opts.Dev), h)))), 2048)
+				if err != nil {
+					log.Fatalf("cannot generate rsa key %v", err)
+				}
+			}
+			rsaPrivKey := rsaPrivKey1
+			if rsaPrivKey1.N.Cmp(rsaPrivKey2.N) > 0 {
+				rsaPrivKey = rsaPrivKey2
+			}
+
 			if err != nil {
 				log.Fatalf("cannot generate rsa key %v", err)
 			}
@@ -298,6 +318,7 @@ func NewOpts() *Opts {
 			log.Fatalf("cannot thumb rsa %v", err)
 		}
 		privRSAKid = hex.EncodeToString(kid)
+		log.Infof("kid: %v", privRSAKid)
 	}
 
 	if opts.EdDSA != "" {

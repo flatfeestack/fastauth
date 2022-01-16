@@ -917,7 +917,7 @@ func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 }
 
-func timeWarp(w http.ResponseWriter, r *http.Request) {
+func timeWarp(w http.ResponseWriter, r *http.Request, adminEmail string) {
 	m := mux.Vars(r)
 	h := m["hours"]
 	if h == "" {
@@ -932,7 +932,14 @@ func timeWarp(w http.ResponseWriter, r *http.Request) {
 
 	hoursAdd += hours
 	log.Printf("time warp: %v", timeNow())
-	w.WriteHeader(http.StatusOK)
+
+	//since we warp, the token will be invalid
+	result, err := findAuthByEmail(adminEmail)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-timeWarp, findAuthByEmail for %v failed, %v", adminEmail, err)
+		return
+	}
+	writeOAuth(w, result)
 }
 
 func asUser(w http.ResponseWriter, r *http.Request, _ string) {

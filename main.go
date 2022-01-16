@@ -470,7 +470,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 	}
 
 	if opts.Env == "dev" || opts.Env == "local" {
-		router.HandleFunc("/timewarp/{hours}", timeWarp).Methods(http.MethodPost)
+		router.HandleFunc("/timewarp/{hours}", jwtAuthAdmin(timeWarp, admins)).Methods(http.MethodPost)
 	}
 
 	if opts.OauthEndpoints {

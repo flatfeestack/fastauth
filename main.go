@@ -486,7 +486,8 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 			//TODO: check regitier
 			router.HandleFunc("/ap/registration", authorize).Methods(http.MethodGet)
 		}
-		router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
+		//router.HandleFunc("/oauth/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
+		router.HandleFunc("/.well-known/jwks.json", jwkFunc).Methods(http.MethodGet)
 	}
 
 	if opts.AdminEndpoints {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	ldap_client "github.com/go-ldap/ldap/v3"
 	"github.com/lor00x/goldap/message"
 	log "github.com/sirupsen/logrus"
@@ -11,14 +12,19 @@ import (
 func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 	cn := getAttrDN(string(r.Name()), "cn")
+	pass := string(r.AuthenticationSimple())
 
 	if opts.OAuthUser != "" || opts.OAuthPass != "" {
-		if !(opts.OAuthUser == cn && opts.OAuthPass == string(r.AuthenticationSimple())) {
-			res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
-			if opts.DetailedError {
-				res.SetDiagnosticMessage("passwords do not match, make sure ")
+		if !(opts.OAuthUser == cn && opts.OAuthPass == pass) {
+			_, errString, err := checkEmailPassword(cn, string(r.AuthenticationSimple()))
+			if err != nil {
+				res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)
+				if opts.DetailedError {
+					res.SetDiagnosticMessage(fmt.Sprintf("invalid credentials for %v, %v", string(r.Name()), errString))
+				}
+				w.Write(res)
+				return
 			}
-			w.Write(res)
 		}
 	} else {
 		res := ldap.NewBindResponse(ldap.LDAPResultInvalidCredentials)

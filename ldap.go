@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	ldap_client "github.com/go-ldap/ldap/v3"
+	ldapClient "github.com/go-ldap/ldap/v3"
 	"github.com/lor00x/goldap/message"
 	log "github.com/sirupsen/logrus"
 	ldap "github.com/vjeantet/ldapserver"
@@ -47,7 +47,7 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 //https://github.com/chrishoffman/vault/blob/master/builtin/credential/ldap/backend.go
 func getAttrDN(dn string, atyp string) string {
 	log.Printf("parsing basedn %v", dn)
-	parsedDN, err := ldap_client.ParseDN(dn)
+	parsedDN, err := ldapClient.ParseDN(dn)
 	if err != nil || len(parsedDN.RDNs) == 0 {
 		// It was already a CN, return as-is
 		log.Printf("could not parse %v, %v", dn, err)

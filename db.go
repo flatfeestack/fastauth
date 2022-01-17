@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/base32"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -240,7 +241,15 @@ func addInitialUserWithMeta(username string, password string, metaSystem *string
 		if err != nil {
 			return err
 		}
-		//update meta....
+		if metaSystem != nil {
+			if !json.Valid([]byte(*metaSystem)) {
+				return fmt.Errorf("not valid json: %v", *metaSystem)
+			}
+			err = updateSystemMeta(username, *metaSystem)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

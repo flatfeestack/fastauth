@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	ldap_client "github.com/go-ldap/ldap/v3"
+	"github.com/lor00x/goldap/message"
+	log "github.com/sirupsen/logrus"
 	ldap "github.com/vjeantet/ldapserver"
-	"log"
 	"strings"
 )
 
@@ -76,21 +77,35 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	} else if strings.Index(r.FilterString(), "cn") >= 0 {
 		cn = getAttrDN(r.FilterString(), "cn")
 	} else {
+		log.Errorf("no cn found in [%v]", r.BaseObject())
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
 		w.Write(res)
 		return
 	}
 
-	_, err := findAuthByEmail(cn)
+	dbRes, err := findAuthByEmail(cn)
 	if err != nil {
+		log.Errorf("cannot find user? %v", err)
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
 		w.Write(res)
 		return
 	}
 
 	e := ldap.NewSearchResultEntry("cn=" + cn + ", " + string(r.BaseObject()))
+	if dbRes.metaSystem != nil {
+		jsonMapSystem, err := toJsonMap(dbRes.metaSystem)
+		if err != nil {
+			log.Errorf("no json stored? %v", err)
+			res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
+			w.Write(res)
+			return
+		}
+		group := jsonMapSystem["ldap_group"]
+		if group != nil {
+			e.AddAttribute("cn", message.AttributeValue(group.(string)))
+		}
+	}
 	w.Write(e)
-
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
 }

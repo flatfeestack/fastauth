@@ -61,6 +61,14 @@
         }
     </style>
     <script>
+        window.addEventListener('load', (event) => {
+            const queryString = window.location.search;
+            const urlParams = new URLSearchParams(queryString);
+            const aag = urlParams.get('aag');
+            if(aag === "regglight") {
+                changeForm('register');
+            }
+        });
         function changeForm(action) {
             const reg = document.getElementById("register-form");
             const login = document.getElementById("login-form");
@@ -105,22 +113,28 @@
         }
 
         function register() {
+            const urlParams = new URLSearchParams(window.location.search);
             const reg = document.getElementById("register-form");
             const data = new FormData(reg);
-            const json = JSON.stringify(Object.fromEntries(data));
+            const params1 = Object.fromEntries(data);
+            const params2 = Object.fromEntries(urlParams);
+            const merged = {...params1, ...params2};
+            merged["redirect_uri"] = merged["Location"];
+            console.log(JSON.stringify(merged));
+            console.log("TEST");
 
-            fetch("signup", {
+            fetch("/signup", {
                 method: "POST",
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: json})
+                body: JSON.stringify(merged)})
                 .then(response => response.json())
                 .then(data => {
                     const registrationLink = document.getElementById("registrationLink");
                     registrationLink.children[0].setAttribute("href", data.url);
                     registrationLink.style.display = "block";
-                    changeForm('login')
+                    changeForm('login');
                     })
                 .catch(function(err) {
                     console.error(err);

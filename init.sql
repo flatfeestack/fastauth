@@ -11,5 +11,6 @@ CREATE TABLE IF NOT EXISTS auth (
     totp_verified TIMESTAMP,
 	error_count INT DEFAULT 0,
     meta_system TEXT,
+    flow_type VARCHAR(4),
     created_at TIMESTAMP NOT NULL
 );

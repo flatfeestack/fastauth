@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/text/language"
 	"gopkg.in/square/go-jose.v2"
 	"html/template"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,6 +42,12 @@ type scryptParam struct {
 	len int
 }
 
+const (
+	flowPassword   = "pwd"
+	flowCode       = "code"
+	flowInvitation = "inv"
+)
+
 var (
 	m       = map[uint8]scryptParam{0: {16384, 8, 1, 32}}
 	matcher = language.NewMatcher([]language.Tag{
@@ -66,7 +72,15 @@ func confirmEmail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-writeOAuth, findAuthByEmail for %v failed, %v", email, err)
 		return
 	}
-	writeOAuth(w, result)
+
+	if result.flowType == flowCode {
+		keys := r.URL.Query()
+		uri := keys.Get("redirect_uri")
+		w.Header().Set("Location", uri+"&email="+url.QueryEscape(email))
+		w.WriteHeader(http.StatusSeeOther)
+	} else {
+		writeOAuth(w, result)
+	}
 }
 
 func writeOAuth(w http.ResponseWriter, result *dbRes) {
@@ -150,7 +164,7 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	params["email"] = email
 	params["lang"] = lang(r)
 	//TODO: better check if user is already in DB
-	err = insertUser(email, nil, emailToken, refreshToken, timeNow())
+	err = insertUser(email, nil, emailToken, refreshToken, flowInvitation, timeNow())
 	if err != nil {
 		log.Printf("could not insert user %v", err)
 		params["url"] = opts.EmailLinkPrefix + "/login"
@@ -260,7 +274,24 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = insertUser(cred.Email, calcPw, emailToken, refreshToken, timeNow())
+	flowType := flowPassword
+	urlParams := ""
+	if cred.RedirectUri != "" {
+		urlParams = "?redirect_uri=" + url.QueryEscape(cred.RedirectUri)
+		i := strings.Index(cred.RedirectUri, "?")
+		if i < len(cred.RedirectUri) && i > 0 {
+			m, err := url.ParseQuery(cred.RedirectUri[strings.Index(cred.RedirectUri, "?")+1:])
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
+				return
+			}
+			if m.Get("code_challenge") != "" {
+				flowType = flowCode
+			}
+		}
+	}
+
+	err = insertUser(cred.Email, calcPw, emailToken, refreshToken, flowType, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)
 		return
@@ -269,7 +300,7 @@ func signup(w http.ResponseWriter, r *http.Request) {
 	params := map[string]interface{}{}
 	params["token"] = emailToken
 	params["email"] = cred.Email
-	params["url"] = opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken
+	params["url"] = opts.EmailLinkPrefix + "/confirm/signup/" + url.QueryEscape(cred.Email) + "/" + emailToken + urlParams
 	params["lang"] = lang(r)
 
 	e := prepareEmail(cred.Email, params,
@@ -384,17 +415,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 
 	if cred.CodeCodeChallengeMethod != "" {
 		//return the code flow
-		encoded, _, err := encodeCodeToken(cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", cred.Email, err)
-			return
-		}
-		w.Header().Set("Location", cred.RedirectUri+"?code="+encoded)
-		if cred.RedirectAs201 {
-			w.WriteHeader(http.StatusCreated)
-		} else {
-			w.WriteHeader(http.StatusSeeOther)
-		}
+		handleCode(w, cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod, cred.RedirectUri, cred.RedirectAs201)
 	} else {
 		refreshToken, err := resetRefreshToken(result.refreshToken, cred.Email)
 		if err != nil {
@@ -414,6 +435,20 @@ func login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Write(oauthEnc)
+	}
+}
+
+func handleCode(w http.ResponseWriter, email string, codeChallenge string, codeChallengeMethod string, redirectUri string, redirectAs201 bool) {
+	encoded, _, err := encodeCodeToken(email, codeChallenge, codeChallengeMethod)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "invalid_request", "blocked", "ERR-login-14, cannot set refresh token for %v, %v", email, err)
+		return
+	}
+	w.Header().Set("Location", redirectUri+"?code="+encoded)
+	if redirectAs201 {
+		w.WriteHeader(http.StatusCreated)
+	} else {
+		w.WriteHeader(http.StatusSeeOther)
 	}
 }
 
@@ -865,7 +900,16 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 //https://tools.ietf.org/html/rfc6749#section-1.3.1
 //https://developer.okta.com/blog/2019/08/22/okta-authjs-pkce
 func authorize(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "login.html")
+	keys := r.URL.Query()
+	rt := keys.Get("response_type")
+	if rt == flowCode {
+		handleCode(w, keys.Get("email"),
+			keys.Get("code_challenge"),
+			keys.Get("code_challenge_method"),
+			keys.Get("redirect_uri"), false)
+	} else {
+		http.ServeFile(w, r, "login.html")
+	}
 }
 
 func revoke(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {

@@ -5,9 +5,9 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -24,6 +24,7 @@ type dbRes struct {
 	totp         *string
 	totpVerified *time.Time
 	errorCount   int
+	flowType     string
 	metaSystem   *string
 }
 
@@ -31,11 +32,11 @@ func findAuthByEmail(email string) (*dbRes, error) {
 	var res dbRes
 	var pw string
 	query := `SELECT sms, password, meta_system, refresh_token, 
-       				 email_token, totp, sms_verified, totp_verified, error_count 
+       				 email_token, totp, sms_verified, totp_verified, error_count, flow_type
               FROM auth WHERE email = $1`
 	err := db.QueryRow(query, email).Scan(
 		&res.sms, &pw, &res.metaSystem, &res.refreshToken, &res.emailToken,
-		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount)
+		&res.totp, &res.smsVerified, &res.totpVerified, &res.errorCount, &res.flowType)
 
 	if err != nil {
 		return nil, err
@@ -48,20 +49,20 @@ func findAuthByEmail(email string) (*dbRes, error) {
 	return &res, nil
 }
 
-func insertUser(email string, pwRaw []byte, emailToken string, refreshToken string, now time.Time) error {
+func insertUser(email string, pwRaw []byte, emailToken string, refreshToken string, flowType string, now time.Time) error {
 	var pw *string
 	if pwRaw != nil {
 		s1 := base32.StdEncoding.EncodeToString(pwRaw)
 		pw = &s1
 	}
-	stmt, err := db.Prepare(`INSERT INTO auth (email, password, email_token, refresh_token, created_at) 
-								   VALUES ($1, $2, $3, $4, $5)`)
+	stmt, err := db.Prepare(`INSERT INTO auth (email, password, email_token, refresh_token, flow_type, created_at) 
+								   VALUES ($1, $2, $3, $4, $5, $6)`)
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(email, pw, emailToken, refreshToken, now)
+	res, err := stmt.Exec(email, pw, emailToken, refreshToken, flowType, now)
 	return handleErr(res, err, "INSERT INTO auth", email)
 }
 
@@ -233,7 +234,7 @@ func addInitialUserWithMeta(username string, password string, metaSystem *string
 		if err != nil {
 			return err
 		}
-		err = insertUser(username, dk, "emailToken", "refreshToken", timeNow())
+		err = insertUser(username, dk, "emailToken", "refreshToken", "sys", timeNow())
 		if err != nil {
 			return err
 		}

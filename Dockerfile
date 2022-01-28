@@ -13,4 +13,5 @@ FROM gcr.io/distroless/static
 WORKDIR /home/nonroot
 COPY --from=builder /app/login.html /app/banner.txt /app/fastauth /app/rmdb.sql /app/init.sql ./
 USER nonroot
+VOLUME /home/nonroot/fastauth.db
 ENTRYPOINT ["/home/nonroot/fastauth"]

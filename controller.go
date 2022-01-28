@@ -417,7 +417,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		//return the code flow
 		handleCode(w, cred.Email, cred.CodeChallenge, cred.CodeCodeChallengeMethod, cred.RedirectUri, cred.RedirectAs201)
 	} else {
-		refreshToken, err := resetRefreshToken(result.refreshToken, cred.Email)
+		refreshToken, err := resetRefreshToken(result.refreshToken)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid_grant", "blocked", "ERR-login-15, cannot reset refresh token %v", err)
 			return
@@ -902,7 +902,8 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 func authorize(w http.ResponseWriter, r *http.Request) {
 	keys := r.URL.Query()
 	rt := keys.Get("response_type")
-	if rt == flowCode {
+	email := keys.Get("email")
+	if rt == flowCode && email != "" {
 		handleCode(w, keys.Get("email"),
 			keys.Get("code_challenge"),
 			keys.Get("code_challenge_method"),
@@ -912,7 +913,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func revoke(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+func revoke(w http.ResponseWriter, r *http.Request) {
 	tokenHint, err := param("token_type_hint", r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", "blocked", "ERR-oauth-07, unsupported grant type")
@@ -928,7 +929,7 @@ func revoke(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 			writeErr(w, http.StatusBadRequest, "unsupported_grant_type1", "blocked", "ERR-oauth-07, unsupported grant type")
 			return
 		}
-		_, err = resetRefreshToken(oldToken, claims.Subject)
+		_, err = resetRefreshToken(oldToken)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "unsupported_grant_type2", "blocked", "ERR-oauth-07, unsupported grant type")
 			return
@@ -940,21 +941,36 @@ func revoke(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 }
 
 func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
+	keys := r.URL.Query()
+	ru := keys.Get("redirect_uri")
+
 	result, err := findAuthByEmail(claims.Subject)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-oauth-06 %v", err)
+		if ru != "" {
+			log.Printf("ERR-oauth-06 %v", err)
+			w.Header().Set("Location", ru)
+			w.WriteHeader(http.StatusSeeOther)
+		} else {
+			writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "ERR-oauth-06 %v", err)
+		}
 		return
 	}
 
 	refreshToken := result.refreshToken
-	_, err = resetRefreshToken(refreshToken, claims.Subject)
+	_, err = resetRefreshToken(refreshToken)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type")
+		if ru != "" {
+			log.Printf("ERR-oauth-07, unsupported grant type: %v", err)
+			w.Header().Set("Location", ru)
+			w.WriteHeader(http.StatusSeeOther)
+		} else {
+			writeErr(w, http.StatusBadRequest, "unsupported_grant_type", "blocked", "ERR-oauth-07, unsupported grant type: %v", err)
+		}
 		return
 	}
 
-	if len(r.URL.Query()["redirect_uri"]) > 0 {
-		w.Header().Set("Location", r.URL.Query()["redirect_uri"][0])
+	if ru != "" {
+		w.Header().Set("Location", ru)
 		w.WriteHeader(http.StatusSeeOther)
 	} else {
 		w.WriteHeader(http.StatusOK)

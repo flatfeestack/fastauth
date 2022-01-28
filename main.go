@@ -478,7 +478,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		//TODO: check regitier
 		router.HandleFunc("/ap/login", login).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/token", oauth).Methods(http.MethodPost)
-		router.HandleFunc("/oauth/revoke", jwtAuth(revoke)).Methods(http.MethodPost)
+		router.HandleFunc("/oauth/revoke", revoke).Methods(http.MethodPost)
 		router.HandleFunc("/oauth/authorize", authorize).Methods(http.MethodGet)
 		//convenience function
 		if opts.Env == "dev" || opts.Env == "local" {

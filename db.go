@@ -77,15 +77,15 @@ func deleteDbUser(email string) error {
 	return handleErr(res, err, "DELETE FROM auth", email)
 }
 
-func updateRefreshToken(email string, oldRefreshToken string, newRefreshToken string) error {
-	stmt, err := db.Prepare("UPDATE auth SET refresh_token = $1 WHERE refresh_token = $2 and email=$3")
+func updateRefreshToken(oldRefreshToken string, newRefreshToken string) error {
+	stmt, err := db.Prepare("UPDATE auth SET refresh_token = $1 WHERE refresh_token = $2")
 	if err != nil {
 		return fmt.Errorf("prepare UPDATE refreshTokenfor statement failed: %v", err)
 	}
 	defer closeAndLog(stmt)
 
-	res, err := stmt.Exec(newRefreshToken, oldRefreshToken, email)
-	return handleErr(res, err, "UPDATE refreshToken", "n/a")
+	res, err := stmt.Exec(newRefreshToken, oldRefreshToken)
+	return handleErrEffect(res, err, "UPDATE refreshToken", "n/a", false)
 }
 
 func updateSystemMeta(email string, systemMeta string) error {
@@ -215,12 +215,19 @@ func resetCount(email string) error {
 }
 
 func handleErr(res sql.Result, err error, info string, email string) error {
+	return handleErrEffect(res, err, info, email, true)
+}
+
+func handleErrEffect(res sql.Result, err error, info string, email string, mustHaveEffect bool) error {
 	if err != nil {
 		return fmt.Errorf("%v query %v failed: %v", info, email, err)
 	}
 	nr, err := res.RowsAffected()
-	if nr == 0 || err != nil {
-		return fmt.Errorf("%v %v rows %v, affected or err: %v", info, nr, email, err)
+	if mustHaveEffect && nr == 0 {
+		return fmt.Errorf("%v %v rows %v, affected: %v", info, nr, email)
+	}
+	if err != nil {
+		return fmt.Errorf("%v %v err: %v", info, email, err)
 	}
 	return nil
 }

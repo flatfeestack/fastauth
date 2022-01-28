@@ -35,11 +35,27 @@ func jwtAuthAdmin(next func(w http.ResponseWriter, r *http.Request, email string
 func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClaims)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, err := jwtAuth0(r)
-		if claims != nil && err != nil {
-			writeErr(w, http.StatusUnauthorized, "invalid_client", "refused", "Token expired: %v", claims.Subject)
-			return
-		} else if claims == nil && err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "jwtAuthAdmin error: %v", err)
+		if err != nil {
+			keys := r.URL.Query()
+			ru := keys.Get("redirect_uri")
+
+			if claims != nil {
+				if ru != "" {
+					log.Printf("Token expired: %v", claims.Subject)
+					w.Header().Set("Location", ru)
+					w.WriteHeader(http.StatusSeeOther)
+				} else {
+					writeErr(w, http.StatusUnauthorized, "invalid_client", "refused", "Token expired: %v", claims.Subject)
+				}
+			} else if claims == nil {
+				if ru != "" {
+					log.Printf("jwtAuthAdmin error: %v", err)
+					w.Header().Set("Location", ru)
+					w.WriteHeader(http.StatusSeeOther)
+				} else {
+					writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "jwtAuthAdmin error: %v", err)
+				}
+			}
 			return
 		}
 		next(w, r, claims)
@@ -202,12 +218,12 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
  This function is also used in case of revoking a token, where a new token is created,
  but not returned to the user, so the user has to login to get the refresh token
 */
-func resetRefreshToken(oldToken string, email string) (string, error) {
+func resetRefreshToken(oldToken string) (string, error) {
 	newToken, err := genToken()
 	if err != nil {
 		return "", err
 	}
-	err = updateRefreshToken(email, oldToken, newToken)
+	err = updateRefreshToken(oldToken, newToken)
 	if err != nil {
 		return "", err
 	}
@@ -263,7 +279,7 @@ func encodeAccessTokens(email string, metaSystem *string) (string, error) {
 func encodeRefreshTokens(email string, refreshToken string) (string, int64, error) {
 	if opts.ResetRefresh {
 		var err error
-		refreshToken, err = resetRefreshToken(refreshToken, email)
+		refreshToken, err = resetRefreshToken(refreshToken)
 		if err != nil {
 			return "", 0, fmt.Errorf("ERR-refresh-07, cannot reset access token for %v, %v", email, err)
 		}

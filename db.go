@@ -224,7 +224,7 @@ func handleErrEffect(res sql.Result, err error, info string, email string, mustH
 	}
 	nr, err := res.RowsAffected()
 	if mustHaveEffect && nr == 0 {
-		return fmt.Errorf("%v %v rows %v, affected: %v", info, nr, email)
+		return fmt.Errorf("%v rows %v, affected: %v", info, nr, email)
 	}
 	if err != nil {
 		return fmt.Errorf("%v %v err: %v", info, email, err)

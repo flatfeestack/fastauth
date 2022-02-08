@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -133,18 +134,43 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	vars := mux.Vars(r)
 	email := vars["email"]
 
-	var params map[string]interface{}
-	if r.Body != nil {
+	params := map[string]interface{}{}
+	if r.Body != nil && r.Body != http.NoBody {
 		err := json.NewDecoder(r.Body).Decode(&params)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "email in invite is wrong %v", err)
+			writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "cannot decode invite %v", err)
 			return
 		}
 	}
+	params["lang"] = lang(r)
 
 	err := validateEmail(email)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "email in invite is wrong %v", err)
+		return
+	}
+
+	u, err := findAuthByEmail(email)
+
+	if err != nil && err != sql.ErrNoRows {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "find email %v", err)
+		return
+	}
+
+	if u != nil {
+		//user already exists, send email to direct him to the invitations
+		params["url"] = opts.EmailLinkPrefix + "/user/invitations"
+		e := prepareEmail(email, params,
+			"template-subject-invite-old_"+claims.Scope, "You have been invited by "+claims.Subject,
+			"template-plain-invite-old_"+claims.Scope, "Click on this link to see your invitation: "+params["url"].(string),
+			"template-html-invite-old_"+claims.Scope, params["lang"].(string))
+		go func() {
+			err = sendEmail(opts.EmailUrl, e)
+			if err != nil {
+				log.Printf("ERR-signup-07, send email failed: %v, %v\n", opts.EmailUrl, err)
+			}
+		}()
+
 		return
 	}
 
@@ -162,7 +188,7 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 
 	params["token"] = emailToken
 	params["email"] = email
-	params["lang"] = lang(r)
+
 	//TODO: better check if user is already in DB
 	err = insertUser(email, nil, emailToken, refreshToken, flowInvitation, timeNow())
 	if err != nil {
@@ -188,9 +214,9 @@ func invite(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 		params["url"] = opts.EmailLinkPrefix + "/confirm/invite/" + url.QueryEscape(email) + "/" + emailToken + "/" + claims.Subject
 
 		e := prepareEmail(email, params,
-			"template-subject-invite_"+claims.Scope, "You have been invited by "+claims.Subject,
-			"template-plain-invite_"+claims.Scope, "Click on this link to create your account: "+params["url"].(string),
-			"template-html-invite_"+claims.Scope, params["lang"].(string))
+			"template-subject-invite-new_"+claims.Scope, "You have been invited by "+claims.Subject,
+			"template-plain-invite-new_"+claims.Scope, "Click on this link to create your account: "+params["url"].(string),
+			"template-html-invite-new_"+claims.Scope, params["lang"].(string))
 
 		go func() {
 			err = sendEmail(opts.EmailUrl, e)

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"github.com/domodwyer/mailyak/v3"
 	"github.com/joho/godotenv"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/square/go-jose.v2/jwt"
-	"log"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -23,6 +23,17 @@ Test with:
 curl -k -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{"subject":"hàallo","text_message":"Ello","html_message":"<!doctype html><html><body><h1>Ello</h1></body></html>"}' http://localhost:8091
 
 */
+
+const (
+	emailParallel = 1
+)
+
+var (
+	opts   *Opts
+	jwtKey []byte
+	debug  = false
+	queue  chan *EmailRequest
+)
 
 type TokenClaims struct {
 	MailFrom string `json:"mail_from,omitempty"`
@@ -39,74 +50,47 @@ type Opts struct {
 	SmtpPort     int
 }
 
-var (
-	opts   *Opts
-	jwtKey []byte
-	debug  = false
-)
-
 type EmailRequest struct {
 	MailTo      string `json:"mail_to,omitempty"`
 	Subject     string `json:"subject"`
 	TextMessage string `json:"text_message"`
 	HtmlMessage string `json:"html_message"`
+	claims      *TokenClaims
 }
 
 func mailer(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	if r.Method != "POST" {
-		writeErr(w, http.StatusBadRequest, "ERR-07, only POST supported: %v", r.Method)
+		writeErr(w, http.StatusBadRequest, "mailer, only POST supported: %v", r.Method)
 		return
 	}
 
 	var email EmailRequest
 	err := json.NewDecoder(r.Body).Decode(&email)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-08, could not decode request: %v", err)
+		writeErr(w, http.StatusBadRequest, "mailer, could not decode request: %v", err)
 		return
 	}
-
-	mail := mailyak.New(opts.SmtpHost+":"+strconv.Itoa(opts.SmtpPort), smtp.PlainAuth("", claims.MailFrom, opts.SmtpPassword, opts.SmtpHost))
-	var to string
-	if claims.MailTo != "" {
-		to = claims.MailTo
-	} else {
-		to = email.MailTo
-	}
-	mail.To(to)
-	mail.From(claims.MailFrom)
-	mail.Subject(email.Subject)
-	if email.TextMessage != "" {
-		mail.Plain().Set(email.TextMessage)
-	}
-	if email.HtmlMessage != "" {
-		mail.HTML().Set(email.HtmlMessage)
-	}
-
-	err = mail.Send()
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "ERR-09, could not send email: %v", err)
-		return
-	}
-	log.Printf("Email sent from [%s] to [%v], subject: [%v]\n", claims.MailFrom, to, email.Subject)
+	email.claims = claims
+	queue <- &email
 }
 
 func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClaims)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			writeErr(w, http.StatusBadRequest, "ERR-01, authorization header not set")
+			writeErr(w, http.StatusBadRequest, "jwtAuth, authorization header not set")
 			return
 		}
 
 		bearerToken := strings.Split(authHeader, " ")
 		if len(bearerToken) != 2 {
-			writeErr(w, http.StatusBadRequest, "ERR-02, could not split token: %v", bearerToken)
+			writeErr(w, http.StatusBadRequest, "jwtAuth, could not split token: %v", bearerToken)
 			return
 		}
 
 		tok, err := jwt.ParseSigned(bearerToken[1])
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "ERR-03, could not parse token: %v", bearerToken[1])
+			writeErr(w, http.StatusBadRequest, "jwtAuth, could not parse token: %v", bearerToken[1])
 			return
 		}
 
@@ -115,17 +99,17 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 		if tok.Headers[0].Algorithm == "HS256" {
 			err = tok.Claims(jwtKey, claims)
 		} else {
-			writeErr(w, http.StatusUnauthorized, "ERR-04, unknown algorithm: %v", tok.Headers[0].Algorithm)
+			writeErr(w, http.StatusUnauthorized, "jwtAuth, unknown algorithm: %v", tok.Headers[0].Algorithm)
 			return
 		}
 
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "ERR-05, could not parse claims: %v", bearerToken[1])
+			writeErr(w, http.StatusUnauthorized, "jwtAuth, could not parse claims: %v", bearerToken[1])
 			return
 		}
 
 		if claims.Expiry != nil && !claims.Expiry.Time().After(time.Now()) {
-			writeErr(w, http.StatusBadRequest, "ERR-06, expired: %v", claims.Expiry.Time())
+			writeErr(w, http.StatusBadRequest, "jwtAuth, expired: %v", claims.Expiry.Time())
 			return
 		}
 
@@ -135,7 +119,7 @@ func jwtAuth(next func(w http.ResponseWriter, r *http.Request, claims *TokenClai
 
 func writeErr(w http.ResponseWriter, code int, format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	log.Printf(msg)
+	log.Warnf(msg)
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
@@ -213,5 +197,45 @@ func main() {
 
 	http.HandleFunc("/", jwtAuth(mailer))
 	log.Printf("listening on port %v...", opts.Port)
+
+	//create a queue, and send one after the other
+	queue = make(chan *EmailRequest)
+	for i := 0; i < emailParallel; i++ {
+		go func() {
+			for {
+				select {
+				case e := <-queue:
+					send(e)
+				}
+			}
+		}()
+	}
+
 	http.ListenAndServe(":"+strconv.Itoa(opts.Port), nil)
+}
+
+func send(e *EmailRequest) {
+	mail := mailyak.New(opts.SmtpHost+":"+strconv.Itoa(opts.SmtpPort), smtp.PlainAuth("", e.claims.MailFrom, opts.SmtpPassword, opts.SmtpHost))
+	var to string
+	if e.claims.MailTo != "" {
+		to = e.claims.MailTo
+	} else {
+		to = e.MailTo
+	}
+	mail.To(to)
+	mail.From(e.claims.MailFrom)
+	mail.Subject(e.Subject)
+	if e.TextMessage != "" {
+		mail.Plain().Set(e.TextMessage)
+	}
+	if e.HtmlMessage != "" {
+		mail.HTML().Set(e.HtmlMessage)
+	}
+
+	err := mail.Send()
+	if err != nil {
+		log.Warnf("could not send email: %v", err)
+	} else {
+		log.Infof("Email sent from [%s] to [%v], subject: [%v]\n", e.claims.MailFrom, to, e.Subject)
+	}
 }

@@ -24,10 +24,6 @@ curl -k -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: applicatio
 
 */
 
-const (
-	emailParallel = 1
-)
-
 var (
 	opts   *Opts
 	jwtKey []byte
@@ -48,6 +44,7 @@ type Opts struct {
 	SmtpPassword string
 	SmtpHost     string
 	SmtpPort     int
+	Parallel     int
 }
 
 type EmailRequest struct {
@@ -171,6 +168,7 @@ func NewOpts() *Opts {
 	flag.StringVar(&opts.SmtpPassword, "smtp-pw", lookupEnv("SMTP-PW"), "Password for the mail server")
 	flag.IntVar(&opts.SmtpPort, "smtp-port", lookupEnvInt("SMTP-PORT", 587), "Port of the mailserver")
 	flag.StringVar(&opts.SmtpHost, "smtp-host", lookupEnv("SMTP-HOST"), "Host of the mailserver")
+	flag.IntVar(&opts.Parallel, "parallel", lookupEnvInt("PARALLEL", 4), "How many email should be send in parallel")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -200,7 +198,7 @@ func main() {
 
 	//create a queue, and send one after the other
 	queue = make(chan *EmailRequest)
-	for i := 0; i < emailParallel; i++ {
+	for i := 0; i < opts.Parallel; i++ {
 		go func() {
 			for {
 				select {

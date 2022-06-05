@@ -268,6 +268,16 @@ func initDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	err = db.Ping()
+	now := time.Now()
+	for err != nil && now.Add(time.Duration(10)*time.Second).After(timeNow()) {
+		time.Sleep(time.Second)
+		err = db.Ping()
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	//this will create or alter tables
 	//https://stackoverflow.com/questions/12518876/how-to-check-if-a-file-exists-in-go
 	for _, file := range strings.Split(opts.DBScripts, ":") {

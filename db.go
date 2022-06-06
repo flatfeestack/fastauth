@@ -55,8 +55,11 @@ func insertUser(email string, pwRaw []byte, emailToken string, refreshToken stri
 		s1 := base32.StdEncoding.EncodeToString(pwRaw)
 		pw = &s1
 	}
-	stmt, err := db.Prepare(`INSERT INTO auth (email, password, email_token, refresh_token, flow_type, created_at) 
-								   VALUES ($1, $2, $3, $4, $5, $6)`)
+	stmt, err := db.Prepare(`INSERT INTO auth as a (email, password, email_token, refresh_token, flow_type, created_at) 
+								   VALUES ($1, $2, $3, $4, $5, $6)
+								   ON CONFLICT (email) DO
+								     UPDATE SET password=$2, email_token = $3
+								     WHERE a.email_token IS NOT NULL`)
 	if err != nil {
 		return fmt.Errorf("prepare INSERT INTO auth for %v statement failed: %v", email, err)
 	}

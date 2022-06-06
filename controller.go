@@ -317,6 +317,9 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	//check if user exists than was not activated yet. In that case, resend the email and don't try to insert
+	//the user, as this would fail due to constraints
+
 	err = insertUser(cred.Email, calcPw, emailToken, refreshToken, flowType, timeNow())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "blocked", "ERR-signup-07, insert user failed: %v", err)

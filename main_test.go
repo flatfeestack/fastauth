@@ -65,25 +65,22 @@ func TestSignupWrongEmail(t *testing.T) {
 	shutdown()
 }
 
-func TestSignupTwice(t *testing.T) {
+func TestSignupTwiceWorking(t *testing.T) {
 	shutdown := mainTest(testParams...)
 	resp := doSignup("tom@test.ch", "testtest")
-	resp.Body.Close()
 	resp = doSignup("tom@test.ch", "testtest")
 
-	bodyBytes, _ := ioutil.ReadAll(resp.Body)
-	bodyString := string(bodyBytes)
-
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.True(t, strings.Index(bodyString, "ERR-signup-07") > 0)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp.Body.Close()
 	shutdown()
 }
 
-func TestSignupWrong(t *testing.T) {
+func TestSignupTwiceNotWorking(t *testing.T) {
 	shutdown := mainTest(testParams...)
 	resp := doSignup("tom@test.ch", "testtest")
+	token := token("tom@test.ch")
+	resp = doConfirm("tom@test.ch", token)
 	resp = doSignup("tom@test.ch", "testtest")
 
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)

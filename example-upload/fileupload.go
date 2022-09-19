@@ -148,7 +148,7 @@ func NewOpts() *Opts {
 	//defaults
 	if opts.HS256 != "" {
 		if strings.Index(opts.HS256, "0x") == 0 {
-			jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
+			jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256[2:])
 		} else {
 			jwtKey = []byte(opts.HS256)
 		}

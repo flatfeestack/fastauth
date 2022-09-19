@@ -313,6 +313,7 @@ func initDB() (*sql.DB, error) {
 		}
 	}
 
+	log.Infof("Successfully connected!")
 	return db, nil
 }
 

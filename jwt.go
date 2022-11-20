@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/go-jose/go-jose/v3"
+	"github.com/go-jose/go-jose/v3/jwt"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/square/go-jose.v2"
-	"gopkg.in/square/go-jose.v2/jwt"
 	"net/http"
 	"strings"
 	"time"
@@ -211,12 +211,12 @@ func encodeCodeToken(subject string, codeChallenge string, codeChallengeMethod s
 }
 
 /*
- If the option ResetRefresh is set, then every time this function is called, which is
- before the createRefreshToken, then the refresh token is renewed and the old one is
- not valid anymore.
+If the option ResetRefresh is set, then every time this function is called, which is
+before the createRefreshToken, then the refresh token is renewed and the old one is
+not valid anymore.
 
- This function is also used in case of revoking a token, where a new token is created,
- but not returned to the user, so the user has to login to get the refresh token
+This function is also used in case of revoking a token, where a new token is created,
+but not returned to the user, so the user has to login to get the refresh token
 */
 func resetRefreshToken(oldToken string) (string, error) {
 	newToken, err := genToken()

@@ -15,6 +15,8 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dimiro1/banner"
+	"github.com/go-jose/go-jose/v3"
+	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -22,9 +24,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	ldap "github.com/vjeantet/ldapserver"
 	"github.com/xlzd/gotp"
-	ed25519 "golang.org/x/crypto/ed25519"
-	"gopkg.in/square/go-jose.v2"
-	"gopkg.in/square/go-jose.v2/jwt"
+	"golang.org/x/crypto/ed25519"
 	"hash/fnv"
 	rnd "math/rand"
 	"net"
@@ -50,8 +50,9 @@ var (
 	tokenExp     time.Duration
 	refreshExp   time.Duration
 	codeExp      time.Duration
-	hoursAdd     int
+	secondsAdd   int
 	admins       []string
+	debug        bool
 )
 
 type Credentials struct {
@@ -102,7 +103,7 @@ type OAuth struct {
 	Expires      string `json:"expires_in"`
 }
 
-//system user does not need refresh token
+// system user does not need refresh token
 type OAuthSystem struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
@@ -156,7 +157,7 @@ func hash(s string) int64 {
 
 func NewOpts() *Opts {
 	opts := &Opts{}
-	flag.StringVar(&opts.Env, "env", lookupEnv("ENV", "local"), "ENV variable")
+	flag.StringVar(&opts.Env, "env", lookupEnv("ENV"), "ENV variable")
 	flag.StringVar(&opts.Dev, "dev", lookupEnv("DEV"), "Dev settings with initial secret")
 	flag.StringVar(&opts.Issuer, "issuer", lookupEnv("ISSUER"), "name of issuer, default in dev is my-issuer")
 	flag.IntVar(&opts.Port, "port", lookupEnvInt("PORT",
@@ -210,6 +211,11 @@ func NewOpts() *Opts {
 	flag.Parse()
 
 	//set defaults
+	if opts.Env == "local" || opts.Env == "dev" {
+		debug = true
+	}
+
+	//set defaults
 	if opts.Dev != "" {
 		if opts.Scope == "" {
 			opts.Scope = "my-scope"
@@ -227,9 +233,7 @@ func NewOpts() *Opts {
 			opts.UrlSms = "http://localhost:8080/send/sms/{sms}/{token}"
 		}
 
-		if strings.ToLower(opts.RS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
-			opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
-		} else if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
+		if strings.ToLower(opts.HS256) != "true" && strings.ToLower(opts.EdDSA) != "true" {
 			//work around this issue: https://github.com/golang/go/issues/38548
 			//we want for testing to have the same key, I don't care for any database keys
 			rsaPrivKey1, err := rsa.GenerateKey(rnd.New(rnd.NewSource(hash(opts.Dev))), 2048)
@@ -299,11 +303,15 @@ func NewOpts() *Opts {
 		os.Exit(1)
 	}
 
-	if opts.HS256 != "" {
+	if opts.HS256 == "true" {
+		opts.HS256 = base32.StdEncoding.EncodeToString([]byte(opts.Dev))
+	} else if opts.HS256 != "" {
 		var err error
 		jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
 		if err != nil {
-			log.Fatalf("cannot decode %v", opts.HS256)
+			h := sha256.New()
+			h.Write([]byte(opts.HS256))
+			jwtKey = h.Sum(nil)
 		}
 	}
 
@@ -464,13 +472,12 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 	router.HandleFunc("/liveness", liveness).Methods(http.MethodGet)
 
 	//display for debug and testing
-	if opts.Env == "dev" || opts.Env == "local" {
+	if debug {
 		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods(http.MethodPost)
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods(http.MethodPost)
-	}
-
-	if opts.Env == "dev" || opts.Env == "local" {
-		router.HandleFunc("/timewarp/{hours}", jwtAuthAdmin(timeWarp, admins)).Methods(http.MethodPost)
+		//admin endpoints
+		router.HandleFunc("/admin/timewarp", jwtAuthAdmin(timeWarpOffset, admins)).Methods(http.MethodGet)
+		router.HandleFunc("/admin/timewarp/{hours}", jwtAuthAdmin(timeWarp, admins)).Methods(http.MethodPost)
 	}
 
 	if opts.OauthEndpoints {
@@ -658,10 +665,10 @@ func paramJson(name string, r *http.Request) (string, error) {
 }
 
 func timeNow() time.Time {
-	if opts.Env == "local" || opts.Env == "dev" {
-		return time.Now().Add(time.Duration(hoursAdd) * time.Hour)
+	if debug {
+		return time.Now().Add(time.Duration(secondsAdd) * time.Second).UTC()
 	} else {
-		return time.Now()
+		return time.Now().UTC()
 	}
 }
 

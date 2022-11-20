@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/go-jose/go-jose/v3/jwt"
 	"github.com/joho/godotenv"
-	"gopkg.in/square/go-jose.v2/jwt"
 	"log"
 	"net/http"
 	"os"

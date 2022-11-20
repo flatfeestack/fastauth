@@ -9,12 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/go-jose/go-jose/v3"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/text/language"
-	"gopkg.in/square/go-jose.v2"
 	"html/template"
 	"io"
 	"io/ioutil"
@@ -23,6 +23,10 @@ import (
 	"strconv"
 	"strings"
 )
+
+type Timewarp struct {
+	Offset int `json:"offset"`
+}
 
 type EmailRequest struct {
 	MailTo      string `json:"mail_to,omitempty"`
@@ -926,8 +930,8 @@ func oauth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-//https://tools.ietf.org/html/rfc6749#section-1.3.1
-//https://developer.okta.com/blog/2019/08/22/okta-authjs-pkce
+// https://tools.ietf.org/html/rfc6749#section-1.3.1
+// https://developer.okta.com/blog/2019/08/22/okta-authjs-pkce
 func authorize(w http.ResponseWriter, r *http.Request) {
 	keys := r.URL.Query()
 	rt := keys.Get("response_type")
@@ -1006,6 +1010,13 @@ func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 }
 
+func timeWarpOffset(w http.ResponseWriter, _ *http.Request, _ string) {
+	tw := Timewarp{
+		Offset: secondsAdd,
+	}
+	writeJson(w, tw)
+}
+
 func timeWarp(w http.ResponseWriter, r *http.Request, adminEmail string) {
 	m := mux.Vars(r)
 	h := m["hours"]
@@ -1019,7 +1030,8 @@ func timeWarp(w http.ResponseWriter, r *http.Request, adminEmail string) {
 		return
 	}
 
-	hoursAdd += hours
+	seconds := hours * 60 * 60
+	secondsAdd += seconds
 	log.Printf("time warp: %v", timeNow())
 
 	//since we warp, the token will be invalid
@@ -1072,4 +1084,12 @@ func updateUser(w http.ResponseWriter, r *http.Request, admin string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeJson(w http.ResponseWriter, obj interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	var err = json.NewEncoder(w).Encode(obj)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "Could encode json: %v", err)
+	}
 }

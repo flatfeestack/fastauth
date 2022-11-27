@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base32"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/crypto/ed25519"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -26,11 +28,12 @@ Create token for the mailer:
 */
 
 type Opts struct {
-	HS256   string
-	RS256   string
-	EdDSA   string
-	Subject string
-	Dir     string
+	HS256      string
+	RS256      string
+	EdDSA      string
+	Subject    string
+	Expiration int
+	Dir        string
 }
 
 var (
@@ -81,12 +84,30 @@ func lookupEnv(key string, defaultValues ...string) string {
 	return ""
 }
 
+func lookupEnvInt(key string, defaultValues ...int) int {
+	if val, ok := os.LookupEnv(key); ok {
+		i, err := strconv.Atoi(val)
+		if err != nil {
+			log.Fatalf("cannot convert integer %v", err)
+			return 0
+		}
+		return i
+	}
+	for _, v := range defaultValues {
+		if v > 0 {
+			return v
+		}
+	}
+	return -1
+}
+
 func NewOpts() *Opts {
 	opts := &Opts{}
 	flag.StringVar(&opts.HS256, "hs256", lookupEnv("HS256"), "HS256 key, set to true to generate a key")
 	flag.StringVar(&opts.RS256, "rs256", lookupEnv("RS256"), "RS256 key, set to true to generate a key")
 	flag.StringVar(&opts.EdDSA, "eddsa", lookupEnv("EDDSA"), "EdDSA key, set to true to generate a key")
-	flag.StringVar(&opts.Subject, "sub", lookupEnv("SUB"), "Subject name how can upload")
+	flag.StringVar(&opts.Subject, "sub", lookupEnv("SUBJECT"), "Subject name/email")
+	flag.IntVar(&opts.Expiration, "exp", lookupEnvInt("EXPIRATION", -1), "Expiration time / unix timestamp seconds")
 	flag.Var(&tokenClaims, "map", "Set key values, separated by : to set other values in the token.")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -105,7 +126,10 @@ func NewOpts() *Opts {
 		} else {
 			jwtKey, err = base32.StdEncoding.DecodeString(opts.HS256)
 			if err != nil {
-				log.Fatalf("cannot decode %v", opts.HS256)
+				h := sha256.New()
+				h.Write([]byte(opts.HS256))
+				jwtKey = h.Sum(nil)
+				log.Printf("jwtKey: %v", opts.HS256)
 			}
 		}
 		log.Printf("HS256 key [%s]", base32.StdEncoding.EncodeToString(jwtKey))
@@ -170,7 +194,7 @@ func NewOpts() *Opts {
 	return opts
 }
 
-func encodeAccessToken(dir string, subject string) (string, error) {
+func encodeAccessToken(subject string, expiration int) (string, error) {
 	var sig jose.Signer
 	var err error
 	if jwtKey != nil {
@@ -184,6 +208,9 @@ func encodeAccessToken(dir string, subject string) (string, error) {
 	}
 
 	tokenClaims["sub"] = subject
+	if expiration >= 0 {
+		tokenClaims["iat"] = expiration
+	}
 	accessTokenString, err := jwt.Signed(sig).Claims(map[string]interface{}(tokenClaims)).CompactSerialize()
 	if err != nil {
 		return "", fmt.Errorf("JWT access token %v failed: %v", subject, err)
@@ -199,7 +226,7 @@ type TokenClaims struct {
 func main() {
 	opts := NewOpts()
 
-	token, err := encodeAccessToken(opts.Dir, opts.Subject)
+	token, err := encodeAccessToken(opts.Subject, opts.Expiration)
 	if err != nil {
 		log.Fatalf("Cannot create token %v", err)
 	}

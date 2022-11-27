@@ -476,7 +476,7 @@ func serverRest(keepAlive bool) (*http.Server, <-chan bool, error) {
 		router.HandleFunc("/send/email/{email}/{token}", displayEmail).Methods(http.MethodPost)
 		router.HandleFunc("/send/sms/{sms}/{token}", displaySMS).Methods(http.MethodPost)
 		//admin endpoints
-		router.HandleFunc("/admin/timewarp", jwtAuthAdmin(timeWarpOffset, admins)).Methods(http.MethodGet)
+		router.HandleFunc("/admin/time", jwtAuthAdmin(serverTime, admins)).Methods(http.MethodGet)
 		router.HandleFunc("/admin/timewarp/{hours}", jwtAuthAdmin(timeWarp, admins)).Methods(http.MethodPost)
 	}
 

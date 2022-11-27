@@ -1010,11 +1010,9 @@ func logout(w http.ResponseWriter, r *http.Request, claims *TokenClaims) {
 	}
 }
 
-func timeWarpOffset(w http.ResponseWriter, _ *http.Request, _ string) {
-	tw := Timewarp{
-		Offset: secondsAdd,
-	}
-	writeJson(w, tw)
+func serverTime(w http.ResponseWriter, r *http.Request, email string) {
+	currentTime := timeNow()
+	writeJsonStr(w, `{"time":"`+currentTime.Format("2006-01-02 15:04:05")+`","offset":`+strconv.Itoa(secondsAdd)+`}`)
 }
 
 func timeWarp(w http.ResponseWriter, r *http.Request, adminEmail string) {
@@ -1086,10 +1084,10 @@ func updateUser(w http.ResponseWriter, r *http.Request, admin string) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func writeJson(w http.ResponseWriter, obj interface{}) {
+func writeJsonStr(w http.ResponseWriter, obj string) {
 	w.Header().Set("Content-Type", "application/json")
-	var err = json.NewEncoder(w).Encode(obj)
+	_, err := w.Write([]byte(obj))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "Could encode json: %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid_grant", "not-found", "Could write json: %v", err)
 	}
 }

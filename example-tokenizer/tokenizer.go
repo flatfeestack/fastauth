@@ -129,7 +129,7 @@ func NewOpts() *Opts {
 				h := sha256.New()
 				h.Write([]byte(opts.HS256))
 				jwtKey = h.Sum(nil)
-				log.Printf("jwtKey: %v", opts.HS256)
+				log.Printf("jwtKey: %v", jwtKey)
 			}
 		}
 		log.Printf("HS256 key [%s]", base32.StdEncoding.EncodeToString(jwtKey))
